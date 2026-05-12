@@ -1,0 +1,398 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@400;700;900&family=Creepster&family=VT323&family=Roboto:wght@400;700&display=swap');
+
+/* Default Cyber Theme */
+body {
+  margin: 0;
+  background: #080c20;
+  color: white;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  max-width: 100vw;
+  transition: background 0.4s ease, filter 0.4s ease;
+}
+
+/* ────────────────────────────────────────────────────────────
+ * Themes (Background & Base Lighting)
+ * ──────────────────────────────────────────────────────────── */
+body.theme-light { background: #ffffff; filter: invert(1) hue-rotate(180deg); }
+body.theme-light img, body.theme-light .no-invert { filter: invert(1) hue-rotate(180deg); }
+
+body.theme-black { background: #000000; }
+body.theme-black .hero-grid-bg { background-image: none !important; }
+
+body.theme-matrix { background: #001100; }
+body.theme-matrix .hero-grid-bg { opacity: 0.1; }
+
+body.theme-blood { background: #1a0000; }
+
+/* ────────────────────────────────────────────────────────────
+ * Font Families
+ * ──────────────────────────────────────────────────────────── */
+body.font-montserrat .font-cyber { font-family: 'Montserrat', sans-serif !important; letter-spacing: -0.02em; }
+body.font-monster .font-cyber { font-family: 'Creepster', cursive !important; letter-spacing: 0.05em; }
+body.font-pixel .font-cyber { font-family: 'VT323', monospace !important; letter-spacing: 0.02em; }
+body.font-roboto .font-cyber { font-family: 'Roboto', sans-serif !important; letter-spacing: 0; }
+
+/* ────────────────────────────────────────────────────────────
+ * Font Colors (Global overrides for headings & text)
+ * ──────────────────────────────────────────────────────────── */
+body.fcolor-red .font-cyber { color: #ef4444 !important; text-shadow: 0 0 10px rgba(239,68,68,0.5) !important; background: none !important; -webkit-text-fill-color: #ef4444 !important; }
+body.fcolor-green .font-cyber { color: #22c55e !important; text-shadow: 0 0 10px rgba(34,197,94,0.5) !important; background: none !important; -webkit-text-fill-color: #22c55e !important; }
+body.fcolor-blue .font-cyber { color: #3b82f6 !important; text-shadow: 0 0 10px rgba(59,130,246,0.5) !important; background: none !important; -webkit-text-fill-color: #3b82f6 !important; }
+body.fcolor-yellow .font-cyber { color: #eab308 !important; text-shadow: 0 0 10px rgba(234,179,8,0.5) !important; background: none !important; -webkit-text-fill-color: #eab308 !important; }
+body.fcolor-pink .font-cyber { color: #ec4899 !important; text-shadow: 0 0 10px rgba(236,72,153,0.5) !important; background: none !important; -webkit-text-fill-color: #ec4899 !important; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; scroll-behavior: smooth; }
+
+/* ── Mobile: ensure nothing exceeds viewport */
+* { max-width: 100%; }
+img, video { height: auto; }
+
+/* ── Glow Shadows ────────────────────────────── */
+.glow-cyan   { @apply shadow-neon-cyan; }
+.glow-pink   { @apply shadow-neon-pink; }
+.glow-purple { @apply shadow-neon-purple; }
+.glow-full   { @apply shadow-neon-glow; }
+
+.text-glow-gold {
+  text-shadow: 0 0 20px rgba(255,215,0,.8), 0 0 40px rgba(255,165,0,.5);
+}
+.text-glow-cyan {
+  text-shadow: 0 0 15px rgba(0,217,255,.8), 0 0 30px rgba(0,217,255,.4);
+}
+
+/* ── Glass ───────────────────────────────────── */
+.glass {
+  backdrop-filter: blur(14px);
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+}
+.glass-dark {
+  backdrop-filter: blur(18px);
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 14px;
+}
+
+/* ── Gradient Text ───────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #00d9ff, #8338ec, #ff006e);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.gradient-text-gold {
+  background: linear-gradient(135deg, #ffd700 0%, #ffb347 40%, #ffd700 70%, #f4a012 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer-text 3s linear infinite;
+}
+
+/* ── Transitions ─────────────────────────────── */
+.transition-smooth { transition: all .3s cubic-bezier(.4,0,.2,1); }
+
+/* ── Keyframes ───────────────────────────────── */
+@keyframes shimmer-border {
+  0%,100% { background-position: 0% 50%; }
+  50%     { background-position: 100% 50%; }
+}
+@keyframes shimmer-text {
+  from { background-position: 0% center; }
+  to   { background-position: 200% center; }
+}
+@keyframes float {
+  0%,100% { transform: translateY(0) rotate(0deg); }
+  50%     { transform: translateY(-10px) rotate(3deg); }
+}
+@keyframes slide-in {
+  from { opacity:0; transform:translateX(-14px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+@keyframes slide-up {
+  from { opacity:0; transform:translateY(20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity:0; }
+  to   { opacity:1; }
+}
+@keyframes pulse-glow {
+  0%,100% { opacity:1; }
+  50%     { opacity:.65; }
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(255,215,0,.7); }
+  70%  { box-shadow: 0 0 0 20px rgba(255,215,0,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,215,0,0); }
+}
+@keyframes rank-change {
+  0%,100% { transform:scale(1) translateY(0); }
+  50%     { transform:scale(1.05) translateY(-5px); }
+}
+@keyframes confetti-fall {
+  0%   { transform:translateY(-20px) rotate(0deg); opacity:1; }
+  100% { transform:translateY(110vh) rotate(720deg); opacity:0; }
+}
+@keyframes gradient-shift {
+  0%,100% { background-position:0% 50%; }
+  50%     { background-position:100% 50%; }
+}
+
+/* ── Animation Utilities ─────────────────────── */
+.animate-float      { animation: float 4s ease-in-out infinite; }
+.animate-slide-in   { animation: slide-in .5s ease-out; }
+.animate-slide-up   { animation: slide-up .6s ease-out both; }
+.animate-fade-in    { animation: fade-in .5s ease-out; }
+.animate-glow       { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-pulse-ring { animation: pulse-ring 2s ease-out infinite; }
+.animate-rank-change{ animation: rank-change .6s ease-out; }
+
+/* ── VIP Card (Ultra-sleek Glassmorphism) ─────────── */
+.card-vip {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 24px;
+  padding: 1px; /* for inner border effect */
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.card-vip::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  transform: skewX(-20deg);
+  animation: shimmer-text 6s ease-in-out infinite;
+}
+.card-vip-inner {
+  background: radial-gradient(120% 120% at 50% 0%, rgba(255, 255, 255, 0.06) 0%, rgba(0, 0, 0, 0.2) 100%);
+  border-radius: 23px;
+  height: 100%;
+}
+
+/* ── VIP Stat Pill ───────────────────────────────── */
+.stat-pill {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 1rem;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all .4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.stat-pill:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-3px);
+}
+
+/* ── Hero Grid Background ────────────────────── */
+.hero-grid-bg {
+  background-image:
+    linear-gradient(rgba(0,217,255,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,217,255,.04) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+/* ── Button Shimmer Sweep ────────────────────── */
+.btn-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.btn-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 60%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.13), transparent);
+  transform: skewX(-20deg);
+  transition: left .7s ease;
+}
+.btn-shimmer:hover::after { left: 160%; }
+
+/* ── Rank Badges ─────────────────────────────── */
+.rank-badge-1 {
+  background: linear-gradient(135deg,#ffd700,#ef9b0f);
+  box-shadow: 0 0 16px rgba(255,215,0,.55);
+}
+.rank-badge-2 {
+  background: linear-gradient(135deg,#d0d0d0,#9a9a9a);
+  box-shadow: 0 0 12px rgba(200,200,200,.4);
+}
+.rank-badge-3 {
+  background: linear-gradient(135deg,#cd7f32,#9d5616);
+  box-shadow: 0 0 12px rgba(205,127,50,.4);
+}
+
+/* ── Player count button ─────────────────────── */
+.count-btn {
+  position: relative;
+  overflow: hidden;
+  transition: all .25s ease;
+}
+.count-btn::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at center, rgba(0,217,255,.18), transparent 70%);
+  opacity: 0;
+  transition: opacity .3s;
+}
+.count-btn:hover::before { opacity: 1; }
+.count-btn:active { transform: scale(.96); }
+
+/* ── Confetti ────────────────────────────────── */
+.confetti-container {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+/* ── Scrollbar ───────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track { background: #080c20; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #00d9ff, #8338ec);
+  border-radius: 10px;
+}
+
+/* ════════════════════════════════════════════════════════════
+ * UI STYLES — 7 Professional Element Themes
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── 1. Cyberpunk (DEFAULT) — Glassmorphism + neon glow ── */
+/* No overrides needed, this is the base style */
+
+/* ── 2. Sharp Dark — Zero blur, solid panels, crisp borders ── */
+body.ui-sharp .glass-dark {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(15,15,25,0.95) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 12px !important;
+}
+body.ui-sharp .glass {
+  backdrop-filter: none !important;
+  background: rgba(25,25,40,0.9) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+body.ui-sharp .card-vip {
+  backdrop-filter: none !important;
+  background: rgba(10,10,20,0.95) !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+}
+
+/* ── 3. Corporate — Clean, minimal, solid backgrounds ── */
+body.ui-corporate .glass-dark {
+  backdrop-filter: none !important;
+  background: #1a1a2e !important;
+  border: 1px solid #2d2d44 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+body.ui-corporate .glass {
+  backdrop-filter: none !important;
+  background: #16213e !important;
+  border: 1px solid #2d2d44 !important;
+  border-radius: 8px !important;
+}
+body.ui-corporate .card-vip {
+  backdrop-filter: none !important;
+  background: #1a1a2e !important;
+  border: 1px solid #333355 !important;
+  border-radius: 8px !important;
+}
+body.ui-corporate .card-vip::before { display: none !important; }
+body.ui-corporate .btn-shimmer::after { display: none !important; }
+
+/* ── 4. Neon Arcade — Bright outlines, retro gaming ── */
+body.ui-arcade .glass-dark {
+  backdrop-filter: none !important;
+  background: rgba(0,0,0,0.85) !important;
+  border: 2px solid rgba(0,255,136,0.5) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 15px rgba(0,255,136,0.15), inset 0 0 15px rgba(0,255,136,0.05) !important;
+}
+body.ui-arcade .glass {
+  backdrop-filter: none !important;
+  background: rgba(0,0,0,0.8) !important;
+  border: 2px solid rgba(0,255,136,0.4) !important;
+  border-radius: 4px !important;
+}
+body.ui-arcade .gradient-text {
+  background: linear-gradient(90deg, #00ff88, #00ffcc) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+/* ── 5. Frost Premium — Apple-like elevated cards ── */
+body.ui-frost .glass-dark {
+  backdrop-filter: blur(40px) saturate(1.8) !important;
+  background: rgba(255,255,255,0.08) !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15) !important;
+}
+body.ui-frost .glass {
+  backdrop-filter: blur(30px) saturate(1.5) !important;
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 20px !important;
+}
+
+/* ── 6. Steel — Industrial, metallic, zero-nonsense ── */
+body.ui-steel .glass-dark {
+  backdrop-filter: none !important;
+  background: linear-gradient(180deg, #2a2a35 0%, #1e1e28 100%) !important;
+  border: 1px solid #3a3a4a !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+body.ui-steel .glass {
+  backdrop-filter: none !important;
+  background: linear-gradient(180deg, #333340 0%, #28282f 100%) !important;
+  border: 1px solid #444455 !important;
+  border-radius: 6px !important;
+}
+body.ui-steel .card-vip {
+  backdrop-filter: none !important;
+  background: linear-gradient(180deg, #2e2e3a 0%, #222230 100%) !important;
+  border: 1px solid #444 !important;
+  border-radius: 6px !important;
+}
+body.ui-steel .card-vip::before { display: none !important; }
+
+/* ── 7. Royal Gold — Luxury dark with gold trim ── */
+body.ui-royal .glass-dark {
+  backdrop-filter: blur(10px) !important;
+  background: rgba(20,15,10,0.9) !important;
+  border: 1px solid rgba(212,175,55,0.3) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4), inset 0 1px 0 rgba(212,175,55,0.1) !important;
+}
+body.ui-royal .glass {
+  backdrop-filter: blur(8px) !important;
+  background: rgba(30,20,10,0.85) !important;
+  border: 1px solid rgba(212,175,55,0.25) !important;
+  border-radius: 16px !important;
+}
+body.ui-royal .gradient-text {
+  background: linear-gradient(135deg, #ffd700 0%, #daa520 50%, #b8860b 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+body.ui-royal .card-vip {
+  border: 1px solid rgba(212,175,55,0.4) !important;
+  box-shadow: 0 0 20px rgba(212,175,55,0.1) !important;
+}
