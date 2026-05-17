@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials, copyDOMElementToClipboard } from '../utils/imageExport';
-import { getFilteredLeaderboard, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
+import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
 
 interface LeaderboardProps {
   players: Player[];
@@ -18,6 +18,8 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
   const [timeRange, setTimeRange] = useState<TimeRange>(showTimeFilter ? '24h' : 'all');
   const [filteredPlayers, setFilteredPlayers] = useState<AggregatedPlayer[] | null>(null);
   const [loadingFilter, setLoadingFilter] = useState(false);
+  const [resetCountdown, setResetCountdown] = useState<string>('');
+  const [resetLabel, setResetLabel] = useState<string>('');
 
   // Fetch filtered data when time range changes (only when not 'all')
   useEffect(() => {
@@ -42,6 +44,53 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
       });
 
     return () => { cancelled = true; };
+  }, [timeRange, isTestingMode, showTimeFilter]);
+
+  // Countdown timer for next reset + auto-refresh when reset time is crossed
+  useEffect(() => {
+    if (!showTimeFilter || timeRange === 'all') {
+      setResetCountdown('');
+      setResetLabel('');
+      return;
+    }
+
+    const info = getNextResetInfo(timeRange);
+    if (!info) return;
+
+    setResetLabel(info.label);
+
+    const tick = () => {
+      const now = Date.now();
+      const diff = info.nextReset.getTime() - now;
+
+      if (diff <= 0) {
+        // Reset time has passed — refresh the data
+        setResetCountdown('Resetting...');
+        setLoadingFilter(true);
+        getFilteredLeaderboard(timeRange, isTestingMode)
+          .then((data) => setFilteredPlayers(data))
+          .catch(console.error)
+          .finally(() => setLoadingFilter(false));
+        return;
+      }
+
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const mins  = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const secs  = Math.floor((diff % (1000 * 60)) / 1000);
+
+      if (hours > 24) {
+        const days = Math.floor(hours / 24);
+        setResetCountdown(`${days}d ${hours % 24}h`);
+      } else if (hours > 0) {
+        setResetCountdown(`${hours}h ${mins}m`);
+      } else {
+        setResetCountdown(`${mins}m ${secs}s`);
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
   }, [timeRange, isTestingMode, showTimeFilter]);
 
   // Use filtered data or original players
@@ -132,6 +181,28 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
             </button>
           ))}
         </div>
+
+        {/* Reset Timing Info Badge */}
+        {resetLabel && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg mb-1"
+            style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px]">🔄</span>
+              <span className="text-[10px] sm:text-xs text-purple-300 font-cyber font-bold uppercase tracking-wider">
+                {resetLabel}
+              </span>
+            </div>
+            {resetCountdown && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] text-gray-500 uppercase tracking-wider">Next in</span>
+                <span className="text-xs sm:text-sm font-cyber font-black text-purple-400"
+                  style={{ textShadow: '0 0 8px rgba(139,92,246,0.5)' }}>
+                  {resetCountdown}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       )}
 
       <div className="h-px w-24 sm:w-32 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full mb-4 sm:mb-5" />

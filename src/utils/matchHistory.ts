@@ -42,14 +42,33 @@ export type TimeRange = '24h' | '7d' | '30d' | 'all';
 
 /**
  * Returns the unix ms cutoff for a given time range.
+ *
+ * - 24h  → resets daily at 11:59 AM. The cutoff is the most recent 11:59 AM
+ *          that has already passed (today if after 11:59 AM, yesterday otherwise).
+ * - 7d   → resets every Monday at 00:00. The cutoff is the most recent Monday
+ *          midnight that has already passed.
+ * - 30d  → first day of the current calendar month.
+ * - all  → epoch (0).
  */
 const getCutoff = (range: TimeRange): number => {
   const now = new Date();
   switch (range) {
-    case '24h':
-      return now.getTime() - 24 * 60 * 60 * 1000;
-    case '7d':
-      return now.getTime() - 7 * 24 * 60 * 60 * 1000;
+    case '24h': {
+      // Build today's 11:59:00 AM
+      const resetToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 11, 59, 0, 0);
+      // If we haven't reached 11:59 AM yet, the last reset was yesterday at 11:59 AM
+      if (now.getTime() < resetToday.getTime()) {
+        resetToday.setDate(resetToday.getDate() - 1);
+      }
+      return resetToday.getTime();
+    }
+    case '7d': {
+      // Find the most recent Monday at 00:00
+      const day = now.getDay(); // 0=Sun, 1=Mon, …, 6=Sat
+      const diffToMonday = (day === 0 ? 6 : day - 1); // days since last Monday
+      const lastMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday, 0, 0, 0, 0);
+      return lastMonday.getTime();
+    }
     case '30d': {
       // Calendar month: start of the current month
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -57,6 +76,36 @@ const getCutoff = (range: TimeRange): number => {
     }
     case 'all':
       return 0;
+  }
+};
+
+/**
+ * Returns { nextReset: Date, label: string } for the given time range so
+ * the UI can show a countdown / info badge.
+ */
+export const getNextResetInfo = (range: TimeRange): { nextReset: Date; label: string } | null => {
+  const now = new Date();
+  switch (range) {
+    case '24h': {
+      const resetToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 11, 59, 0, 0);
+      if (now.getTime() >= resetToday.getTime()) {
+        // Next reset is tomorrow at 11:59 AM
+        resetToday.setDate(resetToday.getDate() + 1);
+      }
+      return { nextReset: resetToday, label: 'Resets daily at 11:59 AM' };
+    }
+    case '7d': {
+      const day = now.getDay();
+      const daysUntilMonday = day === 1 ? 7 : (day === 0 ? 1 : 8 - day);
+      const nextMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMonday, 0, 0, 0, 0);
+      return { nextReset: nextMonday, label: 'Resets every Monday' };
+    }
+    case '30d': {
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      return { nextReset: nextMonth, label: `Resets ${nextMonth.toLocaleString('default', { month: 'long' })} 1st` };
+    }
+    case 'all':
+      return null;
   }
 };
 
