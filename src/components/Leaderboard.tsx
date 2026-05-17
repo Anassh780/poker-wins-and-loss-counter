@@ -165,44 +165,47 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
 
       {/* Time Filter Bar */}
       {showTimeFilter && (
-        <div className="flex items-center gap-1.5 mb-4 p-1.5 bg-black/40 rounded-xl border border-white/5 overflow-x-auto">
-          {timeFilters.map(({ key, label, icon }) => (
-            <button
-              key={key}
-              onClick={() => setTimeRange(key)}
-              className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-[10px] sm:text-xs font-cyber font-bold uppercase tracking-wider transition-all flex-shrink-0 ${
-                timeRange === key
-                  ? 'bg-gradient-to-r from-cyan-500/25 to-purple-500/25 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(0,217,255,0.2)]'
-                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
-              }`}
-            >
-              <span className="text-xs">{icon}</span>
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
+        <div className="mb-4">
+          <div className="flex items-center gap-1.5 p-1.5 bg-black/40 rounded-xl border border-white/5 overflow-x-auto">
+            {timeFilters.map(({ key, label, icon }) => (
+              <button
+                key={key}
+                onClick={() => setTimeRange(key)}
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-[10px] sm:text-xs font-cyber font-bold uppercase tracking-wider transition-all flex-shrink-0 ${
+                  timeRange === key
+                    ? 'bg-gradient-to-r from-cyan-500/25 to-purple-500/25 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(0,217,255,0.2)]'
+                    : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+                }`}
+              >
+                <span className="text-xs">{icon}</span>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
 
-        {/* Reset Timing Info Badge */}
-        {resetLabel && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg mb-1"
-            style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px]">🔄</span>
-              <span className="text-[10px] sm:text-xs text-purple-300 font-cyber font-bold uppercase tracking-wider">
-                {resetLabel}
-              </span>
-            </div>
-            {resetCountdown && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[9px] text-gray-500 uppercase tracking-wider">Next in</span>
-                <span className="text-xs sm:text-sm font-cyber font-black text-purple-400"
-                  style={{ textShadow: '0 0 8px rgba(139,92,246,0.5)' }}>
-                  {resetCountdown}
+          {/* Reset Timing Info Badge */}
+          {resetLabel && (
+            <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-lg"
+              style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px]">🔄</span>
+                <span className="text-[10px] sm:text-xs text-purple-300 font-cyber font-bold uppercase tracking-wider">
+                  {resetLabel}
                 </span>
               </div>
-            )}
-          </div>
-        )}
+              {resetCountdown && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-gray-500 uppercase tracking-wider">Next in</span>
+                  <span className="text-xs sm:text-sm font-cyber font-black text-purple-400"
+                    style={{ textShadow: '0 0 8px rgba(139,92,246,0.5)' }}>
+                    {resetCountdown}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
       )}
 
       <div className="h-px w-24 sm:w-32 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full mb-4 sm:mb-5" />
