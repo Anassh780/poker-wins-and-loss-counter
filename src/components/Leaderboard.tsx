@@ -205,7 +205,6 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
             </div>
           )}
         </div>
-        </div>
       )}
 
       <div className="h-px w-24 sm:w-32 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full mb-4 sm:mb-5" />
