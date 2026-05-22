@@ -5,3 +5,4 @@ export { PlayerSetup } from './PlayerSetup';
 export { PlayerControls } from './PlayerControls';
 export { AdminEditModal } from './AdminEditModal';
 export { AdminManagement } from './AdminManagement';
+export { ErrorSidebar } from './ErrorSidebar';

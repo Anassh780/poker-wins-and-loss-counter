@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials, copyDOMElementToClipboard } from '../utils/imageExport';
 import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
+import { PlayerCard } from './PlayerCard';
 
 interface LeaderboardProps {
   players: Player[];
@@ -20,6 +21,7 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
   const [loadingFilter, setLoadingFilter] = useState(false);
   const [resetCountdown, setResetCountdown] = useState<string>('');
   const [resetLabel, setResetLabel] = useState<string>('');
+  const [previewPlayer, setPreviewPlayer] = useState<Player | null>(null);
 
   // Fetch filtered data when time range changes (only when not 'all')
   useEffect(() => {
@@ -252,8 +254,9 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
 
           return (
             <div key={player.id}
-              className="rounded-xl sm:rounded-r-xl transition-all duration-300 overflow-hidden animate-slide-in"
-              style={{ background: s.bg, borderLeft: s.border, boxShadow: s.shadow, animationDelay: `${idx * 0.05}s` }}>
+              className="rounded-xl sm:rounded-r-xl transition-all duration-300 overflow-hidden animate-slide-in cursor-pointer hover:scale-[1.01]"
+              style={{ background: s.bg, borderLeft: s.border, boxShadow: s.shadow, animationDelay: `${idx * 0.05}s` }}
+              onClick={() => setPreviewPlayer(player)}>
 
               {/* ── Desktop row */}
               <div className="hidden sm:grid grid-cols-12 gap-2 px-4 py-3.5 items-center relative">
@@ -282,14 +285,14 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
                 </div>
                 <div className="col-span-2 text-center">
                   <div className="inline-block rounded-lg px-2 py-1" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
-                    <span className="font-cyber font-bold text-sm" style={{ color: '#a78bfa' }}>{gp > 0 ? `${wr.toFixed(0)}%` : '—'}</span>
+                    <span className="font-cyber font-bold text-sm" style={{ color: '#a78bfa' }}>{gp > 0 ? `${wr.toFixed(1)}%` : '—'}</span>
                   </div>
                 </div>
                 <div className="col-span-1 text-center">
                   <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp}</span>
                 </div>
                 {isAdmin && canEditPlayers !== false && (
-                  <div className="absolute right-4 cursor-pointer" onClick={() => onAdminEdit?.(player)}>
+                  <div className="absolute right-4 cursor-pointer" onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player); }}>
                     <span className="text-gray-400 hover:text-cyan-400 transition-smooth p-1 text-base bg-white/5 rounded-lg border border-white/10 shadow-lg">⚙️</span>
                   </div>
                 )}
@@ -324,11 +327,11 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
                   </div>
                   <div className="w-8 text-center">
                     <p className="text-[8px] uppercase" style={{ color: 'rgba(255,255,255,0.3)' }}>%</p>
-                    <p className="font-cyber font-bold text-xs" style={{ color: '#a78bfa' }}>{gp > 0 ? `${wr.toFixed(0)}` : '—'}</p>
+                    <p className="font-cyber font-bold text-xs" style={{ color: '#a78bfa' }}>{gp > 0 ? `${wr.toFixed(1)}` : '—'}</p>
                   </div>
                   {isAdmin && canEditPlayers !== false && (
                     <div className="flex items-center pl-1 border-l border-white/10 ml-1">
-                      <button onClick={() => onAdminEdit?.(player)}
+                      <button onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player); }}
                         className="text-gray-400 hover:text-cyan-400 bg-white/5 border border-white/10 rounded-md p-1.5 transition-smooth text-xs">
                         ⚙️
                       </button>
@@ -346,6 +349,15 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
       {!loadingFilter && !filteredPlayers && players.length === 0 && (
         <div className="py-12 text-center rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
           <p className="text-gray-500 text-sm">No players yet. Add players to start tracking!</p>
+        </div>
+      )}
+
+      {/* Mini preview card modal */}
+      {previewPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setPreviewPlayer(null)}>
+          <div className="max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <PlayerCard player={previewPlayer} rank={sorted.findIndex(p => p.id === previewPlayer.id) + 1} />
+          </div>
         </div>
       )}
     </div>

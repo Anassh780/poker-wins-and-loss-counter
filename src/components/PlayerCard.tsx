@@ -63,7 +63,7 @@ export const PlayerCard: FC<PlayerCardProps> = ({
         {[
           { label: 'W', value: player.wins, color: 'text-green-400' },
           { label: 'L', value: player.losses, color: 'text-red-400' },
-          { label: '%', value: `${winRate.toFixed(0)}%`, color: 'text-purple-400' },
+          { label: '%', value: `${winRate.toFixed(1)}%`, color: 'text-purple-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="rounded-lg py-1.5 px-1" style={{ background: 'rgba(0,0,0,0.3)' }}>
             <p className="text-[9px] text-gray-600 uppercase">{label}</p>

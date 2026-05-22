@@ -6,6 +6,7 @@ import {
   PlayerSetup,
   PlayerControls,
   AdminEditModal,
+  ErrorSidebar,
 } from './components';
 import { ProfileModal } from './components/ProfileModal';
 import { ProfileView } from './components/ProfileView';
@@ -21,7 +22,7 @@ import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
 import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { onSnapshot, doc, setDoc, deleteDoc, collection } from 'firebase/firestore';
+import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import './index.css';
 
 type View = 'setup' | 'game' | 'result';
@@ -39,6 +40,7 @@ export default function App() {
   const [sessionStartTime, setSessionStartTime] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [winner, setWinner] = useState<Player | null>(null);
+  const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
   const [theme, setTheme] = useState<'cyber' | 'light' | 'black' | 'matrix' | 'blood'>(() => (localStorage.getItem('ct-theme') as any) || 'cyber');
   const [font, setFont] = useState<'orbitron' | 'montserrat' | 'monster' | 'pixel' | 'roboto'>(() => (localStorage.getItem('ct-font') as any) || 'orbitron');
   const [fontColor, setFontColor] = useState<'cyan' | 'red' | 'green' | 'blue' | 'yellow' | 'pink'>(() => (localStorage.getItem('ct-fcolor') as any) || 'cyan');
@@ -395,6 +397,28 @@ export default function App() {
     setSessionStartTime(0);
     setGamePlayers([]);
     setWinner(null);
+    setSelectedPlayers([]);
+  };
+
+  const togglePlayerSelection = (id: string) => {
+    setSelectedPlayers(prev => prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]);
+  };
+
+  const handleStartGameWithSelected = () => {
+    if (selectedPlayers.length < 2) return;
+    const playersToStart = globalPlayers.filter(p => selectedPlayers.includes(p.id)).map(p => ({
+      ...p,
+      wins: 0,
+      losses: 0
+    }));
+    setPlayerCount(playersToStart.length);
+    setGamePlayers(playersToStart);
+    setEditingPlayer(null);
+    setShowPlayerSetup(false);
+    setSessionStartTime(Date.now());
+    setWinner(null);
+    setMobileTab('leaderboard');
+    setView('game');
   };
 
   const handleAdminSave = async (updatedPlayer: Player) => {
@@ -406,8 +430,19 @@ export default function App() {
   };
 
   const handleAdminDelete = async (playerId: string) => {
-    // Delete globally from firestore
+    // Delete globally from firestore users collection
     await deleteDoc(doc(activeUsersColl, playerId));
+    
+    // Delete all match history records for this player
+    try {
+      const historyColl = collection(db, 'match_history');
+      const q = query(historyColl, where('playerId', '==', playerId));
+      const snap = await getDocs(q);
+      const deletePromises = snap.docs.map(docSnap => deleteDoc(doc(db, 'match_history', docSnap.id)));
+      await Promise.all(deletePromises);
+    } catch (e) {
+      console.error('Failed to delete player history records:', e);
+    }
     
     // Remove locally if they are in the current match
     setGamePlayers(prev => prev.filter(p => p.id !== playerId));
@@ -610,6 +645,9 @@ export default function App() {
           currentAvatar={profileAvatar}
         />
       )}
+
+      {/* Global Error Diagnostics */}
+      <ErrorSidebar isAdmin={isAdmin} />
     </div>
   );
 
@@ -713,24 +751,38 @@ export default function App() {
               <div className="h-px w-32 bg-gradient-to-r from-transparent via-cyan-500 to-transparent mx-auto mt-4" />
             </div>
 
-            {/* Player count card */}
-            <div className="glass-dark rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-4"
-              style={{ border: '1px solid rgba(0,217,255,.15)' }}>
-              <h2 className="text-sm sm:text-lg font-cyber font-bold text-center text-white/80 mb-4 tracking-wider uppercase">
-                Select Player Count
-              </h2>
-              {/* 4 col → fits 7 buttons (4+3) cleanly */}
-              <div className="grid grid-cols-4 gap-2 mb-5">
-                {[2,3,4,5,6,7,8].map((num) => (
-                  <button key={num} onClick={() => handleStartGame(num)}
-                    className="count-btn btn-shimmer py-3 sm:py-4 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 hover:from-cyan-500/25 hover:to-purple-500/25 border border-cyan-500/20 hover:border-cyan-400/60 rounded-xl font-cyber font-black text-lg sm:text-2xl text-cyan-300 hover:text-white transition-smooth hover:shadow-[0_0_16px_rgba(0,217,255,.3)] active:scale-95">
-                    {num}
-                  </button>
-                ))}
+            {/* Quick Start Card */}
+            <div className="glass-dark rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-4" style={{ border: '1px solid rgba(0,217,255,.15)' }}>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-sm sm:text-lg font-cyber font-bold text-white/80 tracking-wider uppercase">Select Players to Start</h2>
+                <span className="text-xs text-cyan-400/80 font-cyber font-bold">{selectedPlayers.length} Selected</span>
               </div>
-              <button onClick={() => handleStartGame(2)}
-                className="btn-shimmer w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-cyber font-bold rounded-xl text-sm sm:text-base tracking-wider transition-smooth hover:shadow-[0_0_24px_rgba(0,217,255,.4)]">
-                Quick Start · 2 Players →
+              
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5 max-h-[35vh] overflow-y-auto pr-2 custom-scrollbar">
+                {globalPlayers.map(p => {
+                  const isSelected = selectedPlayers.includes(p.id);
+                  return (
+                    <button key={p.id} onClick={() => togglePlayerSelection(p.id)}
+                      className={`flex flex-col items-center p-3 rounded-xl border transition-all ${isSelected ? 'bg-cyan-500/20 border-cyan-400 shadow-[0_0_15px_rgba(0,217,255,0.3)]' : 'bg-black/40 border-white/10 hover:border-cyan-500/50'}`}>
+                      <div className={`w-10 h-10 rounded-full mb-2 overflow-hidden border ${isSelected ? 'border-cyan-400' : 'border-white/20'}`}>
+                        {p.avatar ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-xs font-bold text-white">{p.name.charAt(0).toUpperCase()}</div>}
+                      </div>
+                      <span className={`text-xs font-cyber font-bold w-full text-center truncate ${isSelected ? 'text-cyan-300' : 'text-gray-300'}`}>{p.name}</span>
+                    </button>
+                  );
+                })}
+                
+                {/* New Player Tile */}
+                <button onClick={() => handleStartGame(0)}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl border border-dashed border-cyan-500/50 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 transition-all min-h-[90px]">
+                  <span className="text-2xl mb-1">➕</span>
+                  <span className="text-xs font-cyber font-bold text-cyan-300 text-center">New Player</span>
+                </button>
+              </div>
+
+              <button onClick={handleStartGameWithSelected} disabled={selectedPlayers.length < 2}
+                className={`w-full py-3 font-cyber font-bold rounded-xl text-sm sm:text-base tracking-wider transition-smooth ${selectedPlayers.length >= 2 ? 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white hover:shadow-[0_0_24px_rgba(0,217,255,.4)]' : 'bg-white/10 text-gray-500 cursor-not-allowed'}`}>
+                {selectedPlayers.length < 2 ? `Select at least 2 players` : `Start Match (${selectedPlayers.length}) →`}
               </button>
             </div>
 
