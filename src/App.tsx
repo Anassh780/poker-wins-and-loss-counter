@@ -41,6 +41,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [winner, setWinner] = useState<Player | null>(null);
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>([]);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [theme, setTheme] = useState<'cyber' | 'light' | 'black' | 'matrix' | 'blood'>(() => (localStorage.getItem('ct-theme') as any) || 'cyber');
   const [font, setFont] = useState<'orbitron' | 'montserrat' | 'monster' | 'pixel' | 'roboto'>(() => (localStorage.getItem('ct-font') as any) || 'orbitron');
   const [fontColor, setFontColor] = useState<'cyan' | 'red' | 'green' | 'blue' | 'yellow' | 'pink'>(() => (localStorage.getItem('ct-fcolor') as any) || 'cyan');
@@ -193,6 +194,17 @@ export default function App() {
   }, [isTestingMode]);  // Re-run whenever they switch beta databases
 
   // Registration Hook
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   useEffect(() => {
     if (currentUser && globalPlayers.length > 0) {
       const isRegistered = globalPlayers.some(p => p.id === currentUser.uid);
@@ -648,6 +660,17 @@ export default function App() {
 
       {/* Global Error Diagnostics */}
       <ErrorSidebar isAdmin={isAdmin} />
+
+      {/* Offline Alert Popup */}
+      {isOffline && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="glass-dark border border-red-500/50 p-8 rounded-3xl w-full max-w-sm text-center shadow-[0_0_50px_rgba(239,68,68,0.3)]">
+            <div className="text-6xl mb-4 animate-pulse drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]">📡</div>
+            <h2 className="text-2xl font-cyber font-bold text-red-400 mb-2">Connection Lost</h2>
+            <p className="text-gray-400 text-sm font-semibold">Please check your internet connection to sync with the database.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -750,52 +773,6 @@ export default function App() {
               <p className="text-gray-500 text-sm">Multiplayer Win/Loss Ranking System</p>
               <div className="h-px w-32 bg-gradient-to-r from-transparent via-cyan-500 to-transparent mx-auto mt-4" />
             </div>
-
-            {/* Quick Start Card */}
-            <div className="glass-dark rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-4" style={{ border: '1px solid rgba(0,217,255,.15)' }}>
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-sm sm:text-lg font-cyber font-bold text-white/80 tracking-wider uppercase">Select Players to Start</h2>
-                <span className="text-xs text-cyan-400/80 font-cyber font-bold">{selectedPlayers.length} Selected</span>
-              </div>
-              
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5 max-h-[35vh] overflow-y-auto pr-2 custom-scrollbar">
-                {globalPlayers.map(p => {
-                  const isSelected = selectedPlayers.includes(p.id);
-                  return (
-                    <button key={p.id} onClick={() => togglePlayerSelection(p.id)}
-                      className={`flex flex-col items-center p-3 rounded-xl border transition-all ${isSelected ? 'bg-cyan-500/20 border-cyan-400 shadow-[0_0_15px_rgba(0,217,255,0.3)]' : 'bg-black/40 border-white/10 hover:border-cyan-500/50'}`}>
-                      <div className={`w-10 h-10 rounded-full mb-2 overflow-hidden border ${isSelected ? 'border-cyan-400' : 'border-white/20'}`}>
-                        {p.avatar ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-xs font-bold text-white">{p.name.charAt(0).toUpperCase()}</div>}
-                      </div>
-                      <span className={`text-xs font-cyber font-bold w-full text-center truncate ${isSelected ? 'text-cyan-300' : 'text-gray-300'}`}>{p.name}</span>
-                    </button>
-                  );
-                })}
-                
-                {/* New Player Tile */}
-                <button onClick={() => handleStartGame(0)}
-                  className="flex flex-col items-center justify-center p-3 rounded-xl border border-dashed border-cyan-500/50 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 transition-all min-h-[90px]">
-                  <span className="text-2xl mb-1">➕</span>
-                  <span className="text-xs font-cyber font-bold text-cyan-300 text-center">New Player</span>
-                </button>
-              </div>
-
-              <button onClick={handleStartGameWithSelected} disabled={selectedPlayers.length < 2}
-                className={`w-full py-3 font-cyber font-bold rounded-xl text-sm sm:text-base tracking-wider transition-smooth ${selectedPlayers.length >= 2 ? 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white hover:shadow-[0_0_24px_rgba(0,217,255,.4)]' : 'bg-white/10 text-gray-500 cursor-not-allowed'}`}>
-                {selectedPlayers.length < 2 ? `Select at least 2 players` : `Start Match (${selectedPlayers.length}) →`}
-              </button>
-            </div>
-
-            {/* Feature chips */}
-            <div className="flex gap-2 justify-center flex-wrap">
-              {[['📊','Live Leaderboard'],['🎨','Cyberpunk UI'],['📸','Export & Share']].map(([icon, label]) => (
-                <div key={label} className="flex items-center gap-1.5 bg-white/4 border border-white/8 rounded-full px-3 py-1.5">
-                  <span className="text-xs">{icon}</span>
-                  <span className="text-gray-400 text-[10px] sm:text-xs font-semibold whitespace-nowrap">{label}</span>
-                </div>
-              ))}
-            </div>
-            
           </div>
 
           {/* Database Error Banner */}
@@ -806,9 +783,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Global Leaderboard */}
+          {/* Global Leaderboard (Moved to Top) */}
           {currentUser && !dbError && (
-            <div className="w-full max-w-2xl">
+            <div className="w-full max-w-2xl mb-8">
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px bg-gradient-to-r from-transparent to-cyan-500 flex-1 min-w-0" />
                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -830,6 +807,46 @@ export default function App() {
                     </div>
                   )
                 }
+              </div>
+            </div>
+          )}
+
+          {/* Admin Setup Section */}
+          {isAdmin && (
+            <div className="w-full max-w-md mb-10 mt-6 animate-fade-in">
+              {/* Quick Start Card */}
+              <div className="glass-dark rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-4" style={{ border: '1px solid rgba(0,217,255,.15)' }}>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-sm sm:text-lg font-cyber font-bold text-white/80 tracking-wider uppercase">Select Players to Start</h2>
+                  <span className="text-xs text-cyan-400/80 font-cyber font-bold">{selectedPlayers.length} Selected</span>
+                </div>
+                
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5 max-h-[35vh] overflow-y-auto pr-2 custom-scrollbar">
+                  {globalPlayers.map(p => {
+                    const isSelected = selectedPlayers.includes(p.id);
+                    return (
+                      <button key={p.id} onClick={() => togglePlayerSelection(p.id)}
+                        className={`flex flex-col items-center p-3 rounded-xl border transition-all ${isSelected ? 'bg-cyan-500/20 border-cyan-400 shadow-[0_0_15px_rgba(0,217,255,0.3)]' : 'bg-black/40 border-white/10 hover:border-cyan-500/50'}`}>
+                        <div className={`w-10 h-10 rounded-full mb-2 overflow-hidden border ${isSelected ? 'border-cyan-400' : 'border-white/20'}`}>
+                          {p.avatar ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-xs font-bold text-white">{p.name.charAt(0).toUpperCase()}</div>}
+                        </div>
+                        <span className={`text-xs font-cyber font-bold w-full text-center truncate ${isSelected ? 'text-cyan-300' : 'text-gray-300'}`}>{p.name}</span>
+                      </button>
+                    );
+                  })}
+                  
+                  {/* New Player Tile */}
+                  <button onClick={() => handleStartGame(0)}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl border border-dashed border-cyan-500/50 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 transition-all min-h-[90px]">
+                    <span className="text-2xl mb-1">➕</span>
+                    <span className="text-xs font-cyber font-bold text-cyan-300 text-center">New Player</span>
+                  </button>
+                </div>
+
+                <button onClick={handleStartGameWithSelected} disabled={selectedPlayers.length < 2}
+                  className={`w-full py-3 font-cyber font-bold rounded-xl text-sm sm:text-base tracking-wider transition-smooth ${selectedPlayers.length >= 2 ? 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white hover:shadow-[0_0_24px_rgba(0,217,255,.4)]' : 'bg-white/10 text-gray-500 cursor-not-allowed'}`}>
+                  {selectedPlayers.length < 2 ? `Select at least 2 players` : `Start Match (${selectedPlayers.length}) →`}
+                </button>
               </div>
             </div>
           )}

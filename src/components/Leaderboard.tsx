@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials, copyDOMElementToClipboard } from '../utils/imageExport';
 import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
-import { PlayerCard } from './PlayerCard';
 
 interface LeaderboardProps {
   players: Player[];
@@ -352,14 +351,63 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
         </div>
       )}
 
-      {/* Mini preview card modal */}
-      {previewPlayer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setPreviewPlayer(null)}>
-          <div className="max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <PlayerCard player={previewPlayer} rank={sorted.findIndex(p => p.id === previewPlayer.id) + 1} />
+      {/* Advanced Profile Preview Modal */}
+      {previewPlayer && (() => {
+        const pRank = sorted.findIndex(p => p.id === previewPlayer.id) + 1;
+        const gp = previewPlayer.wins + previewPlayer.losses;
+        const wr = gp > 0 ? (previewPlayer.wins / gp) * 100 : 0;
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-fade-in" onClick={() => setPreviewPlayer(null)}>
+            <div className="relative max-w-md w-full glass-dark border border-cyan-500/50 rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(0,217,255,0.3)] transform transition-transform animate-slide-up" onClick={(e) => e.stopPropagation()}>
+              
+              {/* Close Button */}
+              <button onClick={() => setPreviewPlayer(null)} className="absolute top-4 right-4 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-full w-8 h-8 flex items-center justify-center transition-smooth">✕</button>
+
+              {/* Holographic Header */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-cyber font-bold text-xs px-6 py-1 rounded-b-xl shadow-[0_0_20px_rgba(0,217,255,0.5)]">
+                RANK #{pRank}
+              </div>
+
+              {/* Avatar */}
+              <div className="relative w-32 h-32 mx-auto mt-6 mb-6">
+                <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-xl animate-pulse"></div>
+                <div className="relative w-full h-full rounded-full border-4 border-cyan-400/80 overflow-hidden shadow-[0_0_30px_rgba(0,217,255,0.4)]">
+                  {previewPlayer.avatar 
+                    ? <img src={previewPlayer.avatar} alt={previewPlayer.name} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center text-4xl font-cyber font-black text-white">{getAvatarInitials(previewPlayer.name)}</div>
+                  }
+                </div>
+                {pRank === 1 && <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-4xl drop-shadow-[0_0_15px_rgba(250,204,21,0.8)]">👑</div>}
+              </div>
+
+              {/* Name & Title */}
+              <h2 className="text-3xl font-cyber font-black text-white mb-1 tracking-wider text-glow-cyan">{previewPlayer.name}</h2>
+              <p className="text-cyan-400/80 text-sm font-cyber uppercase tracking-widest mb-8">Global Contender</p>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-green-500/50 hover:bg-green-500/10 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Wins</p>
+                  <p className="font-cyber font-black text-2xl text-green-400">{previewPlayer.wins}</p>
+                </div>
+                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-red-500/50 hover:bg-red-500/10 hover:shadow-[0_0_15px_rgba(239,68,68,0.3)]">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Losses</p>
+                  <p className="font-cyber font-black text-2xl text-red-400">{previewPlayer.losses}</p>
+                </div>
+                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-purple-500/50 hover:bg-purple-500/10 hover:shadow-[0_0_15px_rgba(168,85,247,0.3)]">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Win Rate</p>
+                  <p className="font-cyber font-black text-xl sm:text-2xl text-purple-400">{wr.toFixed(1)}<span className="text-xs sm:text-sm">%</span></p>
+                </div>
+              </div>
+
+              {/* Total Matches */}
+              <div className="bg-white/5 rounded-full py-2 px-6 border border-white/10 inline-block mx-auto mb-2 text-sm text-gray-300">
+                Total Matches Played: <span className="font-cyber font-bold text-white">{gp}</span>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
