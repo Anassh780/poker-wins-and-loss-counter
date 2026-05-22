@@ -184,7 +184,11 @@ export default function App() {
     const unsub = onSnapshot(activeUsersColl, (snap) => {
       setDbError(null);
       const list: Player[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Player));
+      snap.forEach((d) => {
+        const data = d.data();
+        // Always use Firestore document ID as the authoritative ID
+        list.push({ ...data, id: d.id } as Player);
+      });
       setGlobalPlayers(list.sort((a, b) => b.wins - a.wins));
     }, (error) => {
       console.error("Firestore error:", error);
@@ -442,22 +446,30 @@ export default function App() {
   };
 
   const handleAdminDelete = async (playerId: string) => {
-    // Delete globally from firestore users collection
-    await deleteDoc(doc(activeUsersColl, playerId));
+    try {
+      // 1. Delete from the main users collection
+      await deleteDoc(doc(activeUsersColl, playerId));
+    } catch (e: any) {
+      console.error('Failed to delete player from database:', e);
+      throw new Error(`Database delete failed: ${e?.message || 'Permission denied'}. Check Firestore security rules.`);
+    }
     
-    // Delete all match history records for this player
+    // 2. Delete all match history records for this player
     try {
       const historyColl = collection(db, 'match_history');
       const q = query(historyColl, where('playerId', '==', playerId));
       const snap = await getDocs(q);
-      const deletePromises = snap.docs.map(docSnap => deleteDoc(doc(db, 'match_history', docSnap.id)));
-      await Promise.all(deletePromises);
+      if (snap.size > 0) {
+        await Promise.all(snap.docs.map(docSnap => deleteDoc(doc(db, 'match_history', docSnap.id))));
+      }
     } catch (e) {
       console.error('Failed to delete player history records:', e);
     }
     
-    // Remove locally if they are in the current match
+    // 3. Remove from all local state
     setGamePlayers(prev => prev.filter(p => p.id !== playerId));
+    setSelectedPlayers(prev => prev.filter(pid => pid !== playerId));
+    setAdminEditingPlayer(null);
   };
 
   // ----- UI Renderings Methods -----
