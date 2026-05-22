@@ -365,7 +365,7 @@ export default function App() {
   const handleAddLoss = (id: string) => {
     pushHistory([...gamePlayers]);
     setGamePlayers((prev) => prev.map((p) => 
-      p.id === id ? { ...p, losses: p.losses + 1 } : { ...p, wins: p.wins + 1 }
+      p.id === id ? { ...p, losses: p.losses + 1 } : p
     ));
   };
 
@@ -503,8 +503,24 @@ export default function App() {
     // Write directly to global firestore
     await setDoc(doc(activeUsersColl, finalPlayer.id), finalPlayer, { merge: true });
     
-    // Also update locally if they are in the current match
-    setGamePlayers(prev => prev.map(p => p.id === finalPlayer.id ? finalPlayer : p));
+    // Also update locally if they are in the current match, but preserve session stats
+    setGamePlayers(prev => prev.map(p => 
+      p.id === finalPlayer.id 
+        ? { 
+            ...p, 
+            name: finalPlayer.name, 
+            avatar: finalPlayer.avatar,
+            isCertified: finalPlayer.isCertified,
+            likes: finalPlayer.likes,
+            dislikes: finalPlayer.dislikes
+          } 
+        : p
+    ));
+  };
+
+  const handleOpenAdminEdit = (player: Player) => {
+    const globalPlayer = globalPlayers.find(p => p.id === player.id);
+    setAdminEditingPlayer(globalPlayer || player);
   };
 
   const handleAdminDelete = async (playerId: string) => {
@@ -876,7 +892,7 @@ export default function App() {
                       players={globalPlayers}
                       isAdmin={isAdmin}
                       canEditPlayers={hasPermission('edit_players')}
-                      onAdminEdit={setAdminEditingPlayer}
+                      onAdminEdit={handleOpenAdminEdit}
                       showTimeFilter={true}
                       isTestingMode={isTestingMode}
                       isGameActive={false}
@@ -1075,7 +1091,7 @@ export default function App() {
                 players={sortedGamePlayers}
                 isAdmin={isAdmin}
                 canEditPlayers={hasPermission('edit_players')}
-                onAdminEdit={setAdminEditingPlayer}
+                onAdminEdit={handleOpenAdminEdit}
                 isGameActive={true}
                 activeGamePlayerIds={gamePlayers.map((p) => p.id)}
                 onVotePlayer={handleVotePlayer}
