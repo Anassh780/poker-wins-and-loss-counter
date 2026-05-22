@@ -931,6 +931,7 @@ export default function App() {
 
           <div className="lg:grid lg:grid-cols-3 lg:gap-8">
             {/* LEFT — Controls */}
+            {isAdmin && (
             <div className={`lg:col-span-1 space-y-4 ${isGameReady && mobileTab !== 'controls' ? 'hidden lg:block' : 'block'}`}>
               {/* Player setup form */}
               {showPlayerSetup && (
@@ -955,7 +956,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Add player button — always visible so you can add mid-game */}
+              {/* Add player button — admin only */}
               {!showPlayerSetup && (
                 <button onClick={() => { setEditingPlayer(null); setShowPlayerSetup(true); }}
                   className="w-full px-4 py-4 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border-2 border-dashed border-cyan-500/50 hover:border-cyan-500 hover:bg-cyan-500/25 rounded-xl text-cyan-300 font-cyber font-bold transition-smooth text-sm sm:text-base active:scale-[.98]">
@@ -993,6 +994,7 @@ export default function App() {
                 </>
               )}
             </div>
+            )}
 
             {/* RIGHT — Leaderboard */}
             <div className={`lg:col-span-2 mt-4 lg:mt-0 overflow-hidden ${isGameReady && mobileTab !== 'leaderboard' ? 'hidden lg:block' : 'block'}`}>
