@@ -7,6 +7,9 @@ export interface Player {
   sessionWins?: number;
   sessionLosses?: number;
   rank?: number;
+  likes?: number;
+  dislikes?: number;
+  isCertified?: boolean;
 }
 
 export interface GameSession {

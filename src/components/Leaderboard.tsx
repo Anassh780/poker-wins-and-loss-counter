@@ -11,9 +11,25 @@ interface LeaderboardProps {
   onAdminEdit?: (player: Player) => void;
   showTimeFilter?: boolean;
   isTestingMode?: boolean;
+  isGameActive?: boolean;
+  activeGamePlayerIds?: string[];
+  onVotePlayer?: (playerId: string, voteType: 'like' | 'dislike') => Promise<void>;
+  currentUserId?: string;
 }
 
-export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers, onAdminEdit, showTimeFilter = false, isTestingMode = false }: LeaderboardProps) => {
+export const Leaderboard = ({
+  players,
+  sortBy = 'wins',
+  isAdmin,
+  canEditPlayers,
+  onAdminEdit,
+  showTimeFilter = false,
+  isTestingMode = false,
+  isGameActive = false,
+  activeGamePlayerIds = [],
+  onVotePlayer,
+  currentUserId,
+}: LeaderboardProps) => {
   const [sortMethod, setSortMethod] = useState<'wins' | 'winRate' | 'matches'>(sortBy);
   const [timeRange, setTimeRange] = useState<TimeRange>(showTimeFilter ? '24h' : 'all');
   const [filteredPlayers, setFilteredPlayers] = useState<AggregatedPlayer[] | null>(null);
@@ -34,10 +50,12 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
 
   const handleRowClick = (e: React.MouseEvent, player: Player) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const container = document.getElementById('export-leaderboard');
+    const containerRect = container ? container.getBoundingClientRect() : { top: 0, left: 0 };
     setPreviewPlayer(player);
     setClickCoords({
-      top: rect.top,
-      left: rect.left,
+      top: rect.top - containerRect.top,
+      left: rect.left - containerRect.left,
       width: rect.width,
       height: rect.height
     });
@@ -292,10 +310,19 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
                         </div>
                     }
                   </div>
-                  <p className="font-cyber font-bold text-base truncate"
-                    style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
-                    {player.name}
-                  </p>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <p className="font-cyber font-bold text-base truncate"
+                      style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
+                      {player.name}
+                    </p>
+                    {player.isCertified && (
+                      <span className="text-yellow-400 flex-shrink-0 animate-pulse" title="Certified Player">
+                        <svg className="w-4 h-4 text-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                        </svg>
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="col-span-2 text-center">
                   <span className="font-cyber font-black text-lg" style={{ color: '#22c55e', textShadow: '0 0 8px rgba(34,197,94,0.5)' }}>{player.wins}</span>
@@ -332,8 +359,17 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
                   }
                 </div>
                 <div className="flex-1 min-w-0 pr-1">
-                  <p className="font-cyber font-bold text-[11px] truncate"
-                    style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="font-cyber font-bold text-[11px] truncate"
+                      style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
+                    {player.isCertified && (
+                      <span className="text-yellow-400 flex-shrink-0" title="Certified Player">
+                        <svg className="w-3.5 h-3.5 text-yellow-400 drop-shadow-[0_0_4px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                        </svg>
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[8px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp} games</p>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 text-right items-center">
@@ -377,115 +413,203 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
         const pRank = sorted.findIndex(p => p.id === previewPlayer.id) + 1;
         const gp = previewPlayer.wins + previewPlayer.losses;
         const wr = gp > 0 ? (previewPlayer.wins / gp) * 100 : 0;
+        const isCountingMode = !!(isGameActive && activeGamePlayerIds?.includes(previewPlayer.id));
+        const rating = Math.max(0, ((previewPlayer.likes || 0) - (previewPlayer.dislikes || 0)) * 0.2);
+        const isSelf = currentUserId === previewPlayer.id;
 
         let cardStyle: React.CSSProperties = {};
         if (clickCoords && !isMobile) {
           const cardWidth = 320;
-          const cardHeight = 460;
+          const cardHeight = 490; // slightly taller to accommodate the new voting controls and rating bars
 
           // Center the card vertically relative to the clicked row
           let top = clickCoords.top + clickCoords.height / 2 - cardHeight / 2;
-          // Clamp top to keep it inside the viewport
-          top = Math.max(16, Math.min(window.innerHeight - cardHeight - 16, top));
+          
+          const container = document.getElementById('export-leaderboard');
+          const containerHeight = container ? container.offsetHeight : 600;
+          const containerWidth = container ? container.offsetWidth : 800;
+
+          // Clamp top to keep it inside the container boundaries with some margin
+          top = Math.max(8, Math.min(containerHeight - cardHeight - 8, top));
 
           // Position the card just offset from the row avatar/name area
-          let left = clickCoords.left + 50;
-          // Clamp left to keep it inside the viewport
-          left = Math.max(16, Math.min(window.innerWidth - cardWidth - 16, left));
+          let left = clickCoords.left + (clickCoords.width / 2) - (cardWidth / 2);
+          left = Math.max(8, Math.min(containerWidth - cardWidth - 8, left));
 
           cardStyle = {
-            position: 'fixed',
+            position: 'absolute',
             top: `${top}px`,
             left: `${left}px`,
           };
         }
 
-        return (
-          <>
-            {/* Transparent non-blocking backdrop for dismissal with subtle premium glass softening */}
-            <div 
-              className="fixed inset-0 z-[90] bg-black/15 backdrop-blur-[1px] animate-fade-in" 
-              onClick={() => { setPreviewPlayer(null); setClickCoords(null); }} 
-            />
-            
-            {/* Floating Card Container */}
-            <div className={`fixed inset-0 z-[100] pointer-events-none ${isMobile ? 'flex items-center justify-center p-4' : ''}`}>
-              <div
-                style={!isMobile && clickCoords ? cardStyle : {}}
-                className="pointer-events-auto w-[320px] h-[460px] rounded-[32px] overflow-hidden border border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.6)] flex flex-col relative animate-slide-up"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Background image / placeholder */}
-                {previewPlayer.avatar ? (
-                  <img src={previewPlayer.avatar} alt={previewPlayer.name} className="absolute inset-0 w-full h-full object-cover z-0" />
-                ) : (
-                  <div className="absolute inset-0 bg-gradient-to-br from-[#1e1b4b] via-[#311042] to-[#082f49] z-0 flex flex-col items-center justify-center">
-                    <div className="absolute inset-0 opacity-[0.07] hero-grid-bg" />
-                    <div className="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-4xl font-cyber font-black text-white/40 shadow-[inset_0_2px_8px_rgba(255,255,255,0.05)]">
-                      {getAvatarInitials(previewPlayer.name)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Scrim Gradient overlay for readability */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/35 to-transparent z-[1]" />
-
-                {/* Cloud Verified rank badge at the top */}
-                <div className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[10px] font-cyber font-bold tracking-wider text-cyan-400">
-                  RANK #{pRank}
-                </div>
-
-                {/* Bottom glass stats card */}
-                <div className="absolute bottom-0 inset-x-0 bg-white/[0.07] backdrop-blur-2xl border-t border-white/15 rounded-t-3xl rounded-b-[32px] p-5 z-10 flex flex-col gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
-                  {/* Name + cloud verified rosette */}
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <h3 className="font-cyber font-black text-xl text-white truncate drop-shadow-sm">{previewPlayer.name}</h3>
-                    <span className="text-white flex-shrink-0 animate-pulse-ring rounded-full" title="Verified Player">
-                      <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                      </svg>
-                    </span>
-                  </div>
-
-                  {/* Personalized tagline */}
-                  <p className="text-white/80 text-xs font-sans leading-relaxed font-medium">
-                    {gp > 0 
-                      ? `Rank #${pRank} • ${wr >= 60 ? 'Master' : wr >= 50 ? 'Elite' : 'Rising'} Contender with a ${wr.toFixed(1)}% win rate across ${gp} matches.`
-                      : `Rank #${pRank} • Global Contender. Ready to play their first match!`
-                    }
-                  </p>
-
-                  {/* Stats Group & Pill Button */}
-                  <div className="flex items-center justify-between mt-1">
-                    {/* Stats Group with icons */}
-                    <div className="flex items-center gap-3.5 text-white/90">
-                      <div className="flex items-center" title="Wins">
-                        <svg className="w-4 h-4 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                        <span className="ml-1 text-sm font-sans font-extrabold tracking-wide">{previewPlayer.wins}</span>
-                      </div>
-                      <div className="flex items-center" title="Losses">
-                        <svg className="w-4 h-4 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        <span className="ml-1 text-sm font-sans font-extrabold tracking-wide">{previewPlayer.losses}</span>
-                      </div>
-                    </div>
-
-                    {/* Pill Button styled like Follow + */}
-                    <button
-                      onClick={() => { setPreviewPlayer(null); setClickCoords(null); }}
-                      className="bg-white text-black font-sans font-extrabold text-xs py-2.5 px-6 rounded-full shadow-[0_4px_12px_rgba(255,255,255,0.25)] hover:bg-white/90 active:scale-95 transition-all duration-200"
-                    >
-                      Close ✕
-                    </button>
-                  </div>
+        const renderCardInterior = () => (
+          <div
+            className="pointer-events-auto w-[320px] h-[490px] rounded-[32px] overflow-hidden border border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.6)] flex flex-col relative animate-slide-up bg-[#0d0a21]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Background image / placeholder */}
+            {previewPlayer.avatar ? (
+              <img src={previewPlayer.avatar} alt={previewPlayer.name} className="absolute inset-0 w-full h-full object-cover z-0" />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-[#1e1b4b] via-[#311042] to-[#082f49] z-0 flex flex-col items-center justify-center">
+                <div className="absolute inset-0 opacity-[0.07] hero-grid-bg" />
+                <div className="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-4xl font-cyber font-black text-white/40 shadow-[inset_0_2px_8px_rgba(255,255,255,0.05)]">
+                  {getAvatarInitials(previewPlayer.name)}
                 </div>
               </div>
+            )}
+
+            {/* Scrim Gradient overlay for readability */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent z-[1]" />
+
+            {/* Cloud Verified rank badge at the top */}
+            <div className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[10px] font-cyber font-bold tracking-wider text-cyan-400">
+              RANK #{pRank}
             </div>
-          </>
+
+            {/* Bottom glass stats card */}
+            <div className="absolute bottom-0 inset-x-0 bg-white/[0.07] backdrop-blur-2xl border-t border-white/15 rounded-t-3xl rounded-b-[32px] p-5 z-10 flex flex-col gap-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+              {/* Name + cloud verified rosette */}
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h3 className="font-cyber font-black text-xl text-white truncate drop-shadow-sm">{previewPlayer.name}</h3>
+                {previewPlayer.isCertified && (
+                  <span className="text-yellow-400 flex-shrink-0 animate-pulse-ring rounded-full" title="Certified Player">
+                    <svg className="w-5 h-5 text-yellow-400" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                    </svg>
+                  </span>
+                )}
+              </div>
+
+              {/* Personalized tagline */}
+              <p className="text-white/80 text-xs font-sans leading-relaxed font-medium">
+                {gp > 0 
+                  ? `Rank #${pRank} • ${wr >= 60 ? 'Master' : wr >= 50 ? 'Elite' : 'Rising'} Contender with a ${wr.toFixed(1)}% win rate across ${gp} matches.`
+                  : `Rank #${pRank} • Global Contender. Ready to play their first match!`
+                }
+              </p>
+
+              {/* Counting Mode: Rating Display & Voting */}
+              {isCountingMode && (
+                <div className="flex flex-col gap-2 mt-0.5 bg-black/35 p-3 rounded-2xl border border-white/5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <span className="text-[8px] uppercase tracking-wider text-purple-300 font-cyber font-bold">Player Rating</span>
+                      <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
+                    </div>
+                  </div>
+
+                  {/* Voting Options: ONLY shown if player win rate >= 85% */}
+                  {wr >= 85 ? (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <button
+                        onClick={async () => {
+                          if (isSelf) return;
+                          if (onVotePlayer) {
+                            await onVotePlayer(previewPlayer.id, 'like');
+                            // Dynamic local update for visual punch
+                            setPreviewPlayer(prev => prev ? { ...prev, likes: (prev.likes || 0) + 1 } : null);
+                          }
+                        }}
+                        disabled={isSelf}
+                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
+                          isSelf
+                            ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
+                            : 'bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500/20 hover:border-green-500/40 active:scale-95'
+                        }`}
+                        title={isSelf ? "Self-voting blocked" : "Played Wisely & Well (+0.2%)"}
+                      >
+                        <span>👍 Like</span>
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (isSelf) return;
+                          if (onVotePlayer) {
+                            await onVotePlayer(previewPlayer.id, 'dislike');
+                            // Dynamic local update for visual punch
+                            setPreviewPlayer(prev => prev ? { ...prev, dislikes: (prev.dislikes || 0) + 1 } : null);
+                          }
+                        }}
+                        disabled={isSelf}
+                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
+                          isSelf
+                            ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
+                            : 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/40 active:scale-95'
+                        }`}
+                        title={isSelf ? "Self-voting blocked" : "Poor Play (-0.2%)"}
+                      >
+                        <span>👎 Dislike</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-[8px] text-center text-gray-500 font-cyber py-1 border border-dashed border-white/5 rounded-lg mt-0.5">
+                      🔒 Rating votes unlocked at ≥85% Win Rate
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Stats Group & Pill Button */}
+              <div className="flex items-center justify-between mt-1">
+                {/* Stats Group with clear Win/Loss wording */}
+                <div className="flex items-center gap-2 text-white/90">
+                  <div className="flex items-center bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-lg" title="Wins">
+                    <span className="text-[9px] font-cyber text-green-400 uppercase mr-1">Wins:</span>
+                    <span className="text-xs font-sans font-extrabold tracking-wide text-green-300">{previewPlayer.wins}</span>
+                  </div>
+                  <div className="flex items-center bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-lg" title="Losses">
+                    <span className="text-[9px] font-cyber text-red-400 uppercase mr-1">Losses:</span>
+                    <span className="text-xs font-sans font-extrabold tracking-wide text-red-300">{previewPlayer.losses}</span>
+                  </div>
+                </div>
+
+                {/* Pill Button styled like Follow + */}
+                <button
+                  onClick={() => { setPreviewPlayer(null); setClickCoords(null); }}
+                  className="bg-white text-black font-sans font-extrabold text-[10px] py-1.5 px-4 rounded-full shadow-[0_4px_12px_rgba(255,255,255,0.25)] hover:bg-white/90 active:scale-95 transition-all duration-200"
+                >
+                  Close ✕
+                </button>
+              </div>
+            </div>
+          </div>
         );
+
+        if (isMobile) {
+          return (
+            <>
+              {/* Transparent non-blocking backdrop for dismissal with subtle premium glass softening */}
+              <div 
+                className="fixed inset-0 z-[90] bg-black/40 backdrop-blur-[2px] animate-fade-in" 
+                onClick={() => { setPreviewPlayer(null); setClickCoords(null); }} 
+              />
+              
+              {/* Mobile Centered Card */}
+              <div className="fixed inset-0 z-[100] pointer-events-none flex items-center justify-center p-4">
+                {renderCardInterior()}
+              </div>
+            </>
+          );
+        } else {
+          return (
+            <>
+              {/* Transparent non-blocking backdrop for dismissal with subtle premium glass softening */}
+              <div 
+                className="fixed inset-0 z-[90] bg-black/15 backdrop-blur-[1px] animate-fade-in" 
+                onClick={() => { setPreviewPlayer(null); setClickCoords(null); }} 
+              />
+              
+              {/* Desktop Absolute Card */}
+              <div style={cardStyle} className="absolute z-[100]">
+                {renderCardInterior()}
+              </div>
+            </>
+          );
+        }
       })()}
     </div>
   );

@@ -376,6 +376,53 @@ export default function App() {
     );
   };
 
+  const checkPlayerCertification = (wins: number, losses: number, likes = 0, dislikes = 0): boolean => {
+    const gp = wins + losses;
+    const winRate = gp > 0 ? (wins / gp) * 100 : 0;
+    const rating = Math.max(0, (likes - dislikes) * 0.2);
+    return winRate >= 85 && rating >= 75;
+  };
+
+  const handleVotePlayer = async (playerId: string, voteType: 'like' | 'dislike'): Promise<void> => {
+    const player = globalPlayers.find((p) => p.id === playerId);
+    if (!player) return;
+
+    const currentLikes = player.likes || 0;
+    const currentDislikes = player.dislikes || 0;
+    const newLikes = voteType === 'like' ? currentLikes + 1 : currentLikes;
+    const newDislikes = voteType === 'dislike' ? currentDislikes + 1 : currentDislikes;
+
+    const isCertified = checkPlayerCertification(player.wins, player.losses, newLikes, newDislikes);
+
+    try {
+      await setDoc(
+        doc(activeUsersColl, playerId),
+        {
+          likes: newLikes,
+          dislikes: newDislikes,
+          isCertified,
+        },
+        { merge: true }
+      );
+
+      // Keep local gamePlayers in sync in real-time
+      setGamePlayers((prev) =>
+        prev.map((p) =>
+          p.id === playerId
+            ? {
+                ...p,
+                likes: newLikes,
+                dislikes: newDislikes,
+                isCertified,
+              }
+            : p
+        )
+      );
+    } catch (e) {
+      console.error("Failed to save vote", e);
+    }
+  };
+
   const handleEndGame = () => {
     if (sortedGamePlayers.length === 0) return;
     setWinner(sortedGamePlayers[0]);
@@ -386,12 +433,19 @@ export default function App() {
       Promise.all(
         gamePlayers.map((p) => {
           const global = globalPlayers.find((g) => g.id === p.id);
+          const finalWins = (global?.wins || 0) + p.wins;
+          const finalLosses = (global?.losses || 0) + p.losses;
+          const likes = global?.likes || 0;
+          const dislikes = global?.dislikes || 0;
+          const isCertified = checkPlayerCertification(finalWins, finalLosses, likes, dislikes);
+
           return setDoc(doc(activeUsersColl, p.id), {
             id: p.id, 
             name: p.name, 
             avatar: p.avatar || '',
-            wins:   (global?.wins   || 0) + p.wins,
-            losses: (global?.losses || 0) + p.losses,
+            wins:   finalWins,
+            losses: finalLosses,
+            isCertified
           }, { merge: true }).catch((err) => {
             console.error("Firebase save failed for", p.name, err);
             alert(`Failed to save ${p.name}. Make sure Firestore rules are set to test mode.`);
@@ -438,11 +492,19 @@ export default function App() {
   };
 
   const handleAdminSave = async (updatedPlayer: Player) => {
+    const isCertified = checkPlayerCertification(
+      updatedPlayer.wins,
+      updatedPlayer.losses,
+      updatedPlayer.likes || 0,
+      updatedPlayer.dislikes || 0
+    );
+    const finalPlayer = { ...updatedPlayer, isCertified };
+
     // Write directly to global firestore
-    await setDoc(doc(activeUsersColl, updatedPlayer.id), updatedPlayer, { merge: true });
+    await setDoc(doc(activeUsersColl, finalPlayer.id), finalPlayer, { merge: true });
     
     // Also update locally if they are in the current match
-    setGamePlayers(prev => prev.map(p => p.id === updatedPlayer.id ? updatedPlayer : p));
+    setGamePlayers(prev => prev.map(p => p.id === finalPlayer.id ? finalPlayer : p));
   };
 
   const handleAdminDelete = async (playerId: string) => {
@@ -810,7 +872,18 @@ export default function App() {
               <div className="glass-dark border border-cyan-500/20 p-4 sm:p-6 rounded-2xl sm:rounded-3xl overflow-hidden"
                 style={{ boxShadow: '0 0 40px rgba(0,217,255,0.07)' }}>
                 {globalPlayers.length > 0
-                  ? <Leaderboard players={globalPlayers} isAdmin={isAdmin} canEditPlayers={hasPermission('edit_players')} onAdminEdit={setAdminEditingPlayer} showTimeFilter={true} isTestingMode={isTestingMode} />
+                  ? <Leaderboard
+                      players={globalPlayers}
+                      isAdmin={isAdmin}
+                      canEditPlayers={hasPermission('edit_players')}
+                      onAdminEdit={setAdminEditingPlayer}
+                      showTimeFilter={true}
+                      isTestingMode={isTestingMode}
+                      isGameActive={false}
+                      activeGamePlayerIds={[]}
+                      onVotePlayer={handleVotePlayer}
+                      currentUserId={currentUser?.uid}
+                    />
                   : (
                     <div className="text-center py-10">
                       <div className="text-4xl mb-3 opacity-30">🏆</div>
@@ -998,7 +1071,16 @@ export default function App() {
 
             {/* RIGHT — Leaderboard */}
             <div className={`lg:col-span-2 mt-4 lg:mt-0 overflow-hidden ${isGameReady && mobileTab !== 'leaderboard' ? 'hidden lg:block' : 'block'}`}>
-              <Leaderboard players={sortedGamePlayers} isAdmin={isAdmin} canEditPlayers={hasPermission('edit_players')} onAdminEdit={setAdminEditingPlayer} />
+              <Leaderboard
+                players={sortedGamePlayers}
+                isAdmin={isAdmin}
+                canEditPlayers={hasPermission('edit_players')}
+                onAdminEdit={setAdminEditingPlayer}
+                isGameActive={true}
+                activeGamePlayerIds={gamePlayers.map((p) => p.id)}
+                onVotePlayer={handleVotePlayer}
+                currentUserId={currentUser?.uid}
+              />
             </div>
           </div>
 

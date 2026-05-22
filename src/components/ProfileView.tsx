@@ -237,6 +237,105 @@ export const ProfileView = ({
                 )}
               </div>
             </div>
+
+            {/* Become a Certified Player Section */}
+            {(() => {
+              const wrNum = gp > 0 ? (wins / gp) * 100 : 0;
+              const likes = myStats?.likes || 0;
+              const dislikes = myStats?.dislikes || 0;
+              const rating = Math.max(0, (likes - dislikes) * 0.2);
+              const isCertified = wrNum >= 85 && rating >= 75;
+
+              return (
+                <div className="bg-gradient-to-br from-purple-950/20 via-black/40 to-cyan-950/20 border border-white/10 rounded-2xl p-5 sm:p-8 mt-6 relative overflow-hidden shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
+                  {/* Subtle decorative glow */}
+                  <div className="absolute -top-12 -right-12 w-32 h-32 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none" />
+
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5">
+                    <div>
+                      <h2 className="font-cyber font-bold text-xl text-white flex items-center gap-2">
+                        <span>🎖️</span> Become a Certified Player
+                      </h2>
+                      <p className="text-gray-400 text-xs mt-1">Unlock the gold verified badge by meeting elite benchmarks.</p>
+                    </div>
+                    {isCertified ? (
+                      <span className="flex-shrink-0 bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 px-3 py-1 rounded-full text-xs font-cyber font-bold uppercase tracking-wider animate-pulse flex items-center gap-1.5 shadow-[0_0_15px_rgba(234,179,8,0.3)]">
+                        <span>🏆</span> Certified
+                      </span>
+                    ) : (
+                      <span className="flex-shrink-0 bg-white/5 border border-white/10 text-gray-400 px-3 py-1 rounded-full text-xs font-cyber font-bold uppercase tracking-wider">
+                        In Progress
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Requirement 1: Win Rate */}
+                    <div>
+                      <div className="flex justify-between items-center text-xs font-cyber font-bold mb-1.5">
+                        <span className="text-gray-300">Win Rate Requirement (≥85%)</span>
+                        <span className={wrNum >= 85 ? 'text-green-400' : 'text-cyan-400'}>
+                          {wrNum.toFixed(1)}% / 85.0%
+                        </span>
+                      </div>
+                      <div className="w-full bg-black/60 rounded-full h-3.5 p-0.5 overflow-hidden border border-white/5">
+                        <div
+                          className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                            wrNum >= 85
+                              ? 'bg-gradient-to-r from-green-500 to-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.4)]'
+                              : 'bg-gradient-to-r from-cyan-500 to-blue-500'
+                          }`}
+                          style={{ width: `${Math.min(100, (wrNum / 85) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Requirement 2: Voting Rating */}
+                    <div>
+                      <div className="flex justify-between items-center text-xs font-cyber font-bold mb-1.5">
+                        <span className="text-gray-300">Peer Approval Rating (≥75%)</span>
+                        <span className={rating >= 75 ? 'text-green-400' : 'text-purple-400'}>
+                          {rating.toFixed(1)}% / 75.0%
+                        </span>
+                      </div>
+                      <div className="w-full bg-black/60 rounded-full h-3.5 p-0.5 overflow-hidden border border-white/5">
+                        <div
+                          className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                            rating >= 75
+                              ? 'bg-gradient-to-r from-green-500 to-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.4)]'
+                              : 'bg-gradient-to-r from-purple-500 to-pink-500'
+                          }`}
+                          style={{ width: `${Math.min(100, (rating / 75) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] text-gray-500 mt-1 pl-1">
+                        <span>Likes: {likes} • Dislikes: {dislikes}</span>
+                        <span>Formula: (Likes - Dislikes) × 0.2%</span>
+                      </div>
+                    </div>
+
+                    {/* Status Box */}
+                    {isCertified ? (
+                      <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mt-2 flex items-center gap-4 animate-scale-up">
+                        <div className="w-12 h-12 rounded-full bg-yellow-500/20 text-yellow-400 flex items-center justify-center text-2xl flex-shrink-0 shadow-[0_0_15px_rgba(234,179,8,0.4)] animate-pulse">
+                          🏆
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-yellow-400 font-cyber font-bold text-sm uppercase tracking-wider">Certified Global Pro</p>
+                          <p className="text-gray-300 text-xs mt-0.5 leading-relaxed">
+                            Outstanding play! You have earned your prestigious Certified Player badge on the leaderboard. Play well to maintain this status.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white/5 border border-white/5 rounded-xl p-3 text-center text-xs text-gray-400 font-cyber mt-2">
+                        💡 <i>Tip: Earn Likes by playing wisely and demonstrating superior gameplay during active games!</i>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
