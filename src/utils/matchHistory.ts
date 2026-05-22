@@ -10,6 +10,7 @@ export interface MatchHistoryEntry {
   losses: number;
   timestamp: number; // Unix ms
   isTestingMode: boolean;
+  timeframe?: TimeRange; // Optional field to lock manual adjustments to a specific timeframe
 }
 
 /**
@@ -150,6 +151,13 @@ export const getFilteredLeaderboard = async (
     // Client-side filter for testing mode
     if (d.isTestingMode !== isTestingMode) return;
 
+    // Strict timeframe locking:
+    // If this entry was explicitly target-bounded to a specific timeframe,
+    // it must ONLY count for that precise timeframe.
+    if (d.timeframe && d.timeframe !== range) {
+      return;
+    }
+
     const existing = map.get(d.playerId);
     if (existing) {
       existing.wins += d.wins;
@@ -170,3 +178,4 @@ export const getFilteredLeaderboard = async (
 
   return Array.from(map.values()).sort((a, b) => b.wins - a.wins);
 };
+

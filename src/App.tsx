@@ -494,52 +494,6 @@ export default function App() {
     setView('game');
   };
 
-  const getAdjustmentTimestamp = (range: TimeRange): number => {
-    const now = Date.now();
-    if (range === '24h') {
-      return now;
-    }
-
-    const getRangeCutoff = (r: TimeRange): number => {
-      const d = new Date();
-      if (r === '24h') {
-        const resetToday = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0, 0, 0);
-        if (d.getTime() < resetToday.getTime()) {
-          resetToday.setDate(resetToday.getDate() - 1);
-        }
-        return resetToday.getTime();
-      }
-      if (r === '7d') {
-        const day = d.getDay();
-        const diffToMonday = (day === 0 ? 6 : day - 1);
-        const lastMonday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diffToMonday, 5, 0, 0, 0);
-        if (d.getTime() < lastMonday.getTime()) {
-          lastMonday.setDate(lastMonday.getDate() - 7);
-        }
-        return lastMonday.getTime();
-      }
-      if (r === '30d') {
-        const monthStart = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-        return monthStart.getTime();
-      }
-      return 0;
-    };
-
-    if (range === '7d') {
-      const cutoff24h = getRangeCutoff('24h');
-      const cutoff7d = getRangeCutoff('7d');
-      return Math.max(cutoff7d + 5000, cutoff24h - 5000);
-    }
-
-    if (range === '30d') {
-      const cutoff7d = getRangeCutoff('7d');
-      const cutoff30d = getRangeCutoff('30d');
-      return Math.max(cutoff30d + 5000, cutoff7d - 5000);
-    }
-
-    return now;
-  };
-
   const handleAdminSave = async (updatedPlayer: Player) => {
     if (adminEditTimeRange !== 'all') {
       const orig = adminEditOriginalPlayer;
@@ -559,15 +513,15 @@ export default function App() {
 
       // Add adjustment match_history entry if there's any stats change
       if (deltaWins !== 0 || deltaLosses !== 0) {
-        const timestamp = getAdjustmentTimestamp(adminEditTimeRange);
         await addDoc(collection(db, 'match_history'), {
           playerId: updatedPlayer.id,
           playerName: updatedPlayer.name,
           playerAvatar: updatedPlayer.avatar || '',
           wins: deltaWins,
           losses: deltaLosses,
-          timestamp,
-          isTestingMode
+          timestamp: Date.now(),
+          isTestingMode,
+          timeframe: adminEditTimeRange
         });
       }
 
