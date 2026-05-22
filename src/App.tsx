@@ -17,12 +17,12 @@ import {
   shareToWhatsApp,
   generateResultSummary,
 } from './utils/imageExport';
-import { logMatchResults } from './utils/matchHistory';
+import { logMatchResults, type TimeRange } from './utils/matchHistory';
 import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
 import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc } from 'firebase/firestore';
 import './index.css';
 
 type View = 'setup' | 'game' | 'result';
@@ -54,6 +54,9 @@ export default function App() {
   
   // Admin logic
   const [adminEditingPlayer, setAdminEditingPlayer] = useState<Player | null>(null);
+  const [adminEditTimeRange, setAdminEditTimeRange] = useState<TimeRange>('all');
+  const [adminEditOriginalPlayer, setAdminEditOriginalPlayer] = useState<Player | null>(null);
+  const [leaderboardRefreshTrigger, setLeaderboardRefreshTrigger] = useState<number>(0);
   const MAIN_ADMIN_EMAIL = 'ghhhbbbhjn3@gmail.com';
   const [adminPermissions, setAdminPermissions] = useState<Record<string, AdminPermissions>>({});
   const userEmail = currentUser?.email?.toLowerCase().trim() || '';
@@ -491,36 +494,123 @@ export default function App() {
     setView('game');
   };
 
-  const handleAdminSave = async (updatedPlayer: Player) => {
-    const isCertified = checkPlayerCertification(
-      updatedPlayer.wins,
-      updatedPlayer.losses,
-      updatedPlayer.likes || 0,
-      updatedPlayer.dislikes || 0
-    );
-    const finalPlayer = { ...updatedPlayer, isCertified };
+  const getAdjustmentTimestamp = (range: TimeRange): number => {
+    const now = Date.now();
+    if (range === '24h') {
+      return now;
+    }
 
-    // Write directly to global firestore
-    await setDoc(doc(activeUsersColl, finalPlayer.id), finalPlayer, { merge: true });
-    
-    // Also update locally if they are in the current match, but preserve session stats
-    setGamePlayers(prev => prev.map(p => 
-      p.id === finalPlayer.id 
-        ? { 
-            ...p, 
-            name: finalPlayer.name, 
-            avatar: finalPlayer.avatar,
-            isCertified: finalPlayer.isCertified,
-            likes: finalPlayer.likes,
-            dislikes: finalPlayer.dislikes
-          } 
-        : p
-    ));
+    const getRangeCutoff = (r: TimeRange): number => {
+      const d = new Date();
+      if (r === '24h') {
+        const resetToday = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0, 0, 0);
+        if (d.getTime() < resetToday.getTime()) {
+          resetToday.setDate(resetToday.getDate() - 1);
+        }
+        return resetToday.getTime();
+      }
+      if (r === '7d') {
+        const day = d.getDay();
+        const diffToMonday = (day === 0 ? 6 : day - 1);
+        const lastMonday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diffToMonday, 5, 0, 0, 0);
+        if (d.getTime() < lastMonday.getTime()) {
+          lastMonday.setDate(lastMonday.getDate() - 7);
+        }
+        return lastMonday.getTime();
+      }
+      if (r === '30d') {
+        const monthStart = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+        return monthStart.getTime();
+      }
+      return 0;
+    };
+
+    if (range === '7d') {
+      const cutoff24h = getRangeCutoff('24h');
+      const cutoff7d = getRangeCutoff('7d');
+      return Math.max(cutoff7d + 5000, cutoff24h - 5000);
+    }
+
+    if (range === '30d') {
+      const cutoff7d = getRangeCutoff('7d');
+      const cutoff30d = getRangeCutoff('30d');
+      return Math.max(cutoff30d + 5000, cutoff7d - 5000);
+    }
+
+    return now;
   };
 
-  const handleOpenAdminEdit = (player: Player) => {
-    const globalPlayer = globalPlayers.find(p => p.id === player.id);
-    setAdminEditingPlayer(globalPlayer || player);
+  const handleAdminSave = async (updatedPlayer: Player) => {
+    if (adminEditTimeRange !== 'all') {
+      const orig = adminEditOriginalPlayer;
+      if (!orig) return;
+
+      const deltaWins = updatedPlayer.wins - orig.wins;
+      const deltaLosses = updatedPlayer.losses - orig.losses;
+
+      // Update name/avatar globally in users collection
+      const globalPlayer = globalPlayers.find(p => p.id === updatedPlayer.id);
+      if (globalPlayer) {
+        await setDoc(doc(activeUsersColl, updatedPlayer.id), {
+          name: updatedPlayer.name,
+          avatar: updatedPlayer.avatar
+        }, { merge: true });
+      }
+
+      // Add adjustment match_history entry if there's any stats change
+      if (deltaWins !== 0 || deltaLosses !== 0) {
+        const timestamp = getAdjustmentTimestamp(adminEditTimeRange);
+        await addDoc(collection(db, 'match_history'), {
+          playerId: updatedPlayer.id,
+          playerName: updatedPlayer.name,
+          playerAvatar: updatedPlayer.avatar || '',
+          wins: deltaWins,
+          losses: deltaLosses,
+          timestamp,
+          isTestingMode
+        });
+      }
+
+      // Increment refresh trigger to refresh Leaderboard
+      setLeaderboardRefreshTrigger(prev => prev + 1);
+    } else {
+      const isCertified = checkPlayerCertification(
+        updatedPlayer.wins,
+        updatedPlayer.losses,
+        updatedPlayer.likes || 0,
+        updatedPlayer.dislikes || 0
+      );
+      const finalPlayer = { ...updatedPlayer, isCertified };
+
+      // Write directly to global firestore
+      await setDoc(doc(activeUsersColl, finalPlayer.id), finalPlayer, { merge: true });
+      
+      // Also update locally if they are in the current match, but preserve session stats
+      setGamePlayers(prev => prev.map(p => 
+        p.id === finalPlayer.id 
+          ? { 
+              ...p, 
+              name: finalPlayer.name, 
+              avatar: finalPlayer.avatar,
+              isCertified: finalPlayer.isCertified,
+              likes: finalPlayer.likes,
+              dislikes: finalPlayer.dislikes
+            } 
+          : p
+      ));
+    }
+  };
+
+  const handleOpenAdminEdit = (player: Player, range: TimeRange = 'all') => {
+    setAdminEditTimeRange(range);
+    if (range === 'all') {
+      const globalPlayer = globalPlayers.find(p => p.id === player.id);
+      setAdminEditingPlayer(globalPlayer || player);
+      setAdminEditOriginalPlayer(globalPlayer || player);
+    } else {
+      setAdminEditingPlayer(player);
+      setAdminEditOriginalPlayer(player);
+    }
   };
 
   const handleAdminDelete = async (playerId: string) => {
@@ -899,6 +989,7 @@ export default function App() {
                       activeGamePlayerIds={[]}
                       onVotePlayer={handleVotePlayer}
                       currentUserId={currentUser?.uid}
+                      refreshTrigger={leaderboardRefreshTrigger}
                     />
                   : (
                     <div className="text-center py-10">
@@ -1096,6 +1187,7 @@ export default function App() {
                 activeGamePlayerIds={gamePlayers.map((p) => p.id)}
                 onVotePlayer={handleVotePlayer}
                 currentUserId={currentUser?.uid}
+                refreshTrigger={leaderboardRefreshTrigger}
               />
             </div>
           </div>
@@ -1119,9 +1211,11 @@ export default function App() {
         {adminEditingPlayer && (
           <AdminEditModal
             player={adminEditingPlayer}
+            timeRange={adminEditTimeRange}
             onSave={handleAdminSave}
             onDelete={handleAdminDelete}
             onClose={() => setAdminEditingPlayer(null)}
+            canDelete={adminEditTimeRange === 'all'}
           />
         )}
       </div>
@@ -1204,9 +1298,11 @@ export default function App() {
         {adminEditingPlayer && (
           <AdminEditModal
             player={adminEditingPlayer}
+            timeRange={adminEditTimeRange}
             onSave={handleAdminSave}
             onDelete={handleAdminDelete}
             onClose={() => setAdminEditingPlayer(null)}
+            canDelete={adminEditTimeRange === 'all'}
           />
         )}
 

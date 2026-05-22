@@ -2,16 +2,18 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Player } from '../types';
 import { getAvatarInitials } from '../utils/imageExport';
+import type { TimeRange } from '../utils/matchHistory';
 
 interface AdminEditModalProps {
   player: Player;
+  timeRange?: TimeRange;
   onSave: (updatedPlayer: Player) => Promise<void>;
   onDelete: (playerId: string) => Promise<void>;
   onClose: () => void;
   canDelete?: boolean;
 }
 
-export const AdminEditModal = ({ player, onSave, onDelete, onClose, canDelete = true }: AdminEditModalProps) => {
+export const AdminEditModal = ({ player, timeRange = 'all', onSave, onDelete, onClose, canDelete = true }: AdminEditModalProps) => {
   const [name, setName] = useState(player.name);
   const [wins, setWins] = useState(player.wins.toString());
   const [losses, setLosses] = useState(player.losses.toString());
@@ -57,7 +59,9 @@ export const AdminEditModal = ({ player, onSave, onDelete, onClose, canDelete = 
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-2">
             <span className="text-xl">⚙️</span>
-            <h2 className="text-xl font-cyber font-bold gradient-text">Admin Edit</h2>
+            <h2 className="text-xl font-cyber font-bold gradient-text">
+              Admin Edit {timeRange !== 'all' ? `(${timeRange})` : '(All Time)'}
+            </h2>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-smooth">✕</button>
         </div>
@@ -87,13 +91,17 @@ export const AdminEditModal = ({ player, onSave, onDelete, onClose, canDelete = 
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-cyan-500/70 mb-1">TOTAL WINS</label>
+              <label className="block text-xs font-bold text-cyan-500/70 mb-1">
+                {timeRange !== 'all' ? `${timeRange.toUpperCase()} WINS` : 'TOTAL WINS'}
+              </label>
               <input type="number" min="0" value={wins} onChange={e => setWins(e.target.value)}
                 disabled={saving || deleting}
                 className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-green-400 font-bold outline-none focus:border-cyan-500 transition-colors font-cyber" />
             </div>
             <div>
-              <label className="block text-xs font-bold text-cyan-500/70 mb-1">TOTAL LOSSES</label>
+              <label className="block text-xs font-bold text-cyan-500/70 mb-1">
+                {timeRange !== 'all' ? `${timeRange.toUpperCase()} LOSSES` : 'TOTAL LOSSES'}
+              </label>
               <input type="number" min="0" value={losses} onChange={e => setLosses(e.target.value)}
                 disabled={saving || deleting}
                 className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-red-400 font-bold outline-none focus:border-cyan-500 transition-colors font-cyber" />

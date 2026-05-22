@@ -8,13 +8,14 @@ interface LeaderboardProps {
   sortBy?: 'wins' | 'winRate' | 'matches';
   isAdmin?: boolean;
   canEditPlayers?: boolean;
-  onAdminEdit?: (player: Player) => void;
+  onAdminEdit?: (player: Player, timeRange: TimeRange) => void;
   showTimeFilter?: boolean;
   isTestingMode?: boolean;
   isGameActive?: boolean;
   activeGamePlayerIds?: string[];
   onVotePlayer?: (playerId: string, voteType: 'like' | 'dislike') => Promise<void>;
   currentUserId?: string;
+  refreshTrigger?: number;
 }
 
 export const Leaderboard = ({
@@ -29,6 +30,7 @@ export const Leaderboard = ({
   activeGamePlayerIds = [],
   onVotePlayer,
   currentUserId,
+  refreshTrigger,
 }: LeaderboardProps) => {
   const [sortMethod, setSortMethod] = useState<'wins' | 'winRate' | 'matches'>(sortBy);
   const [timeRange, setTimeRange] = useState<TimeRange>(showTimeFilter ? '24h' : 'all');
@@ -84,7 +86,7 @@ export const Leaderboard = ({
       });
 
     return () => { cancelled = true; };
-  }, [timeRange, isTestingMode, showTimeFilter]);
+  }, [timeRange, isTestingMode, showTimeFilter, refreshTrigger]);
 
   // Countdown timer for next reset + auto-refresh when reset time is crossed
   useEffect(() => {
@@ -339,7 +341,7 @@ export const Leaderboard = ({
                   <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp}</span>
                 </div>
                 {isAdmin && canEditPlayers !== false && (
-                  <div className="absolute right-4 cursor-pointer" onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player); }}>
+                  <div className="absolute right-4 cursor-pointer" onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player, timeRange); }}>
                     <span className="text-gray-400 hover:text-cyan-400 transition-smooth p-1 text-base bg-white/5 rounded-lg border border-white/10 shadow-lg">⚙️</span>
                   </div>
                 )}
@@ -387,7 +389,7 @@ export const Leaderboard = ({
                   </div>
                   {isAdmin && canEditPlayers !== false && (
                     <div className="flex items-center pl-1 border-l border-white/10 ml-1">
-                      <button onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player); }}
+                      <button onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player, timeRange); }}
                         className="text-gray-400 hover:text-cyan-400 bg-white/5 border border-white/10 rounded-md p-1.5 transition-smooth text-xs">
                         ⚙️
                       </button>
