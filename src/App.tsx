@@ -17,7 +17,7 @@ import {
   shareToWhatsApp,
   generateResultSummary,
 } from './utils/imageExport';
-import { logMatchResults, type TimeRange } from './utils/matchHistory';
+import { logMatchResults, getFilteredLeaderboard, type TimeRange } from './utils/matchHistory';
 import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
 import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
@@ -226,6 +226,68 @@ export default function App() {
     }
   }, [currentUser, globalPlayers]);
 
+  // Automated Backups for 7d, 30d, all timeframes every 8 hours
+  useEffect(() => {
+    if (currentUser && globalPlayers.length > 0) {
+      const triggerAutoBackups = async () => {
+        const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+        try {
+          const backupsColl = collection(db, 'leaderboard_backups');
+          const snap = await getDocs(backupsColl);
+          const existingBackups: any[] = [];
+          snap.forEach(d => {
+            existingBackups.push({ id: d.id, ...d.data() });
+          });
+
+          const timeframes: ('7d' | '30d' | 'all')[] = ['7d', '30d', 'all'];
+
+          for (const tf of timeframes) {
+            const tfBackups = existingBackups.filter(b => b.timeframe === tf && b.isAuto === true);
+            tfBackups.sort((a, b) => b.timestamp - a.timestamp);
+            const latest = tfBackups[0];
+
+            if (!latest || (Date.now() - latest.timestamp >= EIGHT_HOURS_MS)) {
+              let dataToBackup: Player[] = [];
+              if (tf === 'all') {
+                dataToBackup = globalPlayers;
+              } else {
+                const aggPlayers = await getFilteredLeaderboard(tf, isTestingMode);
+                dataToBackup = aggPlayers.map(ap => ({
+                  id: ap.id,
+                  name: ap.name,
+                  avatar: ap.avatar,
+                  wins: ap.wins,
+                  losses: ap.losses
+                }));
+              }
+
+              if (dataToBackup.length > 0) {
+                const timestamp = Date.now();
+                const backupId = `auto_${tf}_${timestamp}`;
+                const formattedDate = new Date(timestamp).toLocaleString();
+                const name = `Auto-Backup (${tf === 'all' ? 'All Time' : tf}) - ${formattedDate}`;
+
+                await setDoc(doc(backupsColl, backupId), {
+                  timestamp,
+                  name,
+                  timeframe: tf,
+                  isAuto: true,
+                  isTestingMode,
+                  data: dataToBackup
+                });
+                console.log(`Automated backup created for ${tf}: ${name}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Failed to run automated backups:", error);
+        }
+      };
+
+      triggerAutoBackups();
+    }
+  }, [currentUser, globalPlayers, isTestingMode]);
+
   const handleRegisterProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!regFirstName.trim() || !currentUser) return;
@@ -362,7 +424,7 @@ export default function App() {
 
   const handleAddWin = (id: string) => {
     pushHistory([...gamePlayers]);
-    setGamePlayers((prev) => prev.map((p) => p.id === id ? { ...p, wins: p.wins + 1 } : p));
+    setGamePlayers((prev) => prev.map((p) => p.id === id ? { ...p, wins: p.wins + 1 } : { ...p, losses: p.losses + 1 }));
   };
 
   const handleAddLoss = (id: string) => {
@@ -934,6 +996,7 @@ export default function App() {
                 {globalPlayers.length > 0
                   ? <Leaderboard
                       players={globalPlayers}
+                      globalPlayers={globalPlayers}
                       isAdmin={isAdmin}
                       canEditPlayers={hasPermission('edit_players')}
                       onAdminEdit={handleOpenAdminEdit}
@@ -1134,6 +1197,7 @@ export default function App() {
             <div className={`lg:col-span-2 mt-4 lg:mt-0 overflow-hidden ${isGameReady && mobileTab !== 'leaderboard' ? 'hidden lg:block' : 'block'}`}>
               <Leaderboard
                 players={sortedGamePlayers}
+                globalPlayers={globalPlayers}
                 isAdmin={isAdmin}
                 canEditPlayers={hasPermission('edit_players')}
                 onAdminEdit={handleOpenAdminEdit}

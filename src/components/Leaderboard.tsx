@@ -5,6 +5,7 @@ import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type Aggregat
 
 interface LeaderboardProps {
   players: Player[];
+  globalPlayers?: Player[];
   sortBy?: 'wins' | 'winRate' | 'matches';
   isAdmin?: boolean;
   canEditPlayers?: boolean;
@@ -20,6 +21,7 @@ interface LeaderboardProps {
 
 export const Leaderboard = ({
   players,
+  globalPlayers,
   sortBy = 'wins',
   isAdmin,
   canEditPlayers,
@@ -413,10 +415,16 @@ export const Leaderboard = ({
       {/* Advanced Profile Preview Modal */}
       {previewPlayer && (() => {
         const pRank = sorted.findIndex(p => p.id === previewPlayer.id) + 1;
-        const gp = previewPlayer.wins + previewPlayer.losses;
-        const wr = gp > 0 ? (previewPlayer.wins / gp) * 100 : 0;
+        const globalPlayer = globalPlayers?.find(gp => gp.id === previewPlayer.id) || previewPlayer;
+        const mergedPlayer = {
+          ...globalPlayer,
+          likes: previewPlayer.likes !== undefined ? previewPlayer.likes : globalPlayer.likes,
+          dislikes: previewPlayer.dislikes !== undefined ? previewPlayer.dislikes : globalPlayer.dislikes,
+        };
+        const gp = mergedPlayer.wins + mergedPlayer.losses;
+        const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
         const isCountingMode = !!(isGameActive && activeGamePlayerIds?.includes(previewPlayer.id));
-        const rating = Math.max(0, ((previewPlayer.likes || 0) - (previewPlayer.dislikes || 0)) * 0.2);
+        const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
 
         let cardStyle: React.CSSProperties = {};
@@ -475,7 +483,7 @@ export const Leaderboard = ({
               {/* Name + cloud verified rosette */}
               <div className="flex items-center gap-1.5 min-w-0">
                 <h3 className="font-cyber font-black text-xl text-white truncate drop-shadow-sm">{previewPlayer.name}</h3>
-                {previewPlayer.isCertified && (
+                {mergedPlayer.isCertified && (
                   <span className="text-yellow-400 flex-shrink-0 animate-pulse-ring rounded-full" title="Certified Player">
                     <svg className="w-5 h-5 text-yellow-400" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
