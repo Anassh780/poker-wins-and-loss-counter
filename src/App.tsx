@@ -429,9 +429,16 @@ export default function App() {
 
   const handleAddLoss = (id: string) => {
     pushHistory([...gamePlayers]);
-    setGamePlayers((prev) => prev.map((p) => 
-      p.id === id ? { ...p, losses: p.losses + 1 } : p
-    ));
+    setGamePlayers((prev) => {
+      if (prev.length === 2) {
+        return prev.map((p) =>
+          p.id === id ? { ...p, losses: p.losses + 1 } : { ...p, wins: p.wins + 1 }
+        );
+      }
+      return prev.map((p) => 
+        p.id === id ? { ...p, losses: p.losses + 1 } : p
+      );
+    });
   };
 
   const handleResetStats = (id?: string) => {
