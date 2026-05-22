@@ -21,6 +21,27 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
   const [resetCountdown, setResetCountdown] = useState<string>('');
   const [resetLabel, setResetLabel] = useState<string>('');
   const [previewPlayer, setPreviewPlayer] = useState<Player | null>(null);
+  const [clickCoords, setClickCoords] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 640;
+
+  const handleRowClick = (e: React.MouseEvent, player: Player) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPreviewPlayer(player);
+    setClickCoords({
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height
+    });
+  };
 
   // Fetch filtered data when time range changes (only when not 'all')
   useEffect(() => {
@@ -255,7 +276,7 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
             <div key={player.id}
               className="rounded-xl sm:rounded-r-xl transition-all duration-300 overflow-hidden animate-slide-in cursor-pointer hover:scale-[1.01]"
               style={{ background: s.bg, borderLeft: s.border, boxShadow: s.shadow, animationDelay: `${idx * 0.05}s` }}
-              onClick={() => setPreviewPlayer(player)}>
+              onClick={(e) => handleRowClick(e, player)}>
 
               {/* ── Desktop row */}
               <div className="hidden sm:grid grid-cols-12 gap-2 px-4 py-3.5 items-center relative">
@@ -356,56 +377,114 @@ export const Leaderboard = ({ players, sortBy = 'wins', isAdmin, canEditPlayers,
         const pRank = sorted.findIndex(p => p.id === previewPlayer.id) + 1;
         const gp = previewPlayer.wins + previewPlayer.losses;
         const wr = gp > 0 ? (previewPlayer.wins / gp) * 100 : 0;
+
+        let cardStyle: React.CSSProperties = {};
+        if (clickCoords && !isMobile) {
+          const cardWidth = 320;
+          const cardHeight = 460;
+
+          // Center the card vertically relative to the clicked row
+          let top = clickCoords.top + clickCoords.height / 2 - cardHeight / 2;
+          // Clamp top to keep it inside the viewport
+          top = Math.max(16, Math.min(window.innerHeight - cardHeight - 16, top));
+
+          // Position the card just offset from the row avatar/name area
+          let left = clickCoords.left + 50;
+          // Clamp left to keep it inside the viewport
+          left = Math.max(16, Math.min(window.innerWidth - cardWidth - 16, left));
+
+          cardStyle = {
+            position: 'fixed',
+            top: `${top}px`,
+            left: `${left}px`,
+          };
+        }
+
         return (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-fade-in" onClick={() => setPreviewPlayer(null)}>
-            <div className="relative max-w-md w-full glass-dark border border-cyan-500/50 rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(0,217,255,0.3)] transform transition-transform animate-slide-up" onClick={(e) => e.stopPropagation()}>
-              
-              {/* Close Button */}
-              <button onClick={() => setPreviewPlayer(null)} className="absolute top-4 right-4 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-full w-8 h-8 flex items-center justify-center transition-smooth">✕</button>
+          <>
+            {/* Transparent non-blocking backdrop for dismissal with subtle premium glass softening */}
+            <div 
+              className="fixed inset-0 z-[90] bg-black/15 backdrop-blur-[1px] animate-fade-in" 
+              onClick={() => { setPreviewPlayer(null); setClickCoords(null); }} 
+            />
+            
+            {/* Floating Card Container */}
+            <div className={`fixed inset-0 z-[100] pointer-events-none ${isMobile ? 'flex items-center justify-center p-4' : ''}`}>
+              <div
+                style={!isMobile && clickCoords ? cardStyle : {}}
+                className="pointer-events-auto w-[320px] h-[460px] rounded-[32px] overflow-hidden border border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.6)] flex flex-col relative animate-slide-up"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Background image / placeholder */}
+                {previewPlayer.avatar ? (
+                  <img src={previewPlayer.avatar} alt={previewPlayer.name} className="absolute inset-0 w-full h-full object-cover z-0" />
+                ) : (
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#1e1b4b] via-[#311042] to-[#082f49] z-0 flex flex-col items-center justify-center">
+                    <div className="absolute inset-0 opacity-[0.07] hero-grid-bg" />
+                    <div className="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-4xl font-cyber font-black text-white/40 shadow-[inset_0_2px_8px_rgba(255,255,255,0.05)]">
+                      {getAvatarInitials(previewPlayer.name)}
+                    </div>
+                  </div>
+                )}
 
-              {/* Holographic Header */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-cyber font-bold text-xs px-6 py-1 rounded-b-xl shadow-[0_0_20px_rgba(0,217,255,0.5)]">
-                RANK #{pRank}
-              </div>
+                {/* Scrim Gradient overlay for readability */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/35 to-transparent z-[1]" />
 
-              {/* Avatar */}
-              <div className="relative w-32 h-32 mx-auto mt-6 mb-6">
-                <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-xl animate-pulse"></div>
-                <div className="relative w-full h-full rounded-full border-4 border-cyan-400/80 overflow-hidden shadow-[0_0_30px_rgba(0,217,255,0.4)]">
-                  {previewPlayer.avatar 
-                    ? <img src={previewPlayer.avatar} alt={previewPlayer.name} className="w-full h-full object-cover" />
-                    : <div className="w-full h-full bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center text-4xl font-cyber font-black text-white">{getAvatarInitials(previewPlayer.name)}</div>
-                  }
+                {/* Cloud Verified rank badge at the top */}
+                <div className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[10px] font-cyber font-bold tracking-wider text-cyan-400">
+                  RANK #{pRank}
                 </div>
-                {pRank === 1 && <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-4xl drop-shadow-[0_0_15px_rgba(250,204,21,0.8)]">👑</div>}
-              </div>
 
-              {/* Name & Title */}
-              <h2 className="text-3xl font-cyber font-black text-white mb-1 tracking-wider text-glow-cyan">{previewPlayer.name}</h2>
-              <p className="text-cyan-400/80 text-sm font-cyber uppercase tracking-widest mb-8">Global Contender</p>
+                {/* Bottom glass stats card */}
+                <div className="absolute bottom-0 inset-x-0 bg-white/[0.07] backdrop-blur-2xl border-t border-white/15 rounded-t-3xl rounded-b-[32px] p-5 z-10 flex flex-col gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                  {/* Name + cloud verified rosette */}
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h3 className="font-cyber font-black text-xl text-white truncate drop-shadow-sm">{previewPlayer.name}</h3>
+                    <span className="text-white flex-shrink-0 animate-pulse-ring rounded-full" title="Verified Player">
+                      <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                      </svg>
+                    </span>
+                  </div>
 
-              {/* Stats Grid */}
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-green-500/50 hover:bg-green-500/10 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]">
-                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Wins</p>
-                  <p className="font-cyber font-black text-2xl text-green-400">{previewPlayer.wins}</p>
-                </div>
-                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-red-500/50 hover:bg-red-500/10 hover:shadow-[0_0_15px_rgba(239,68,68,0.3)]">
-                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Losses</p>
-                  <p className="font-cyber font-black text-2xl text-red-400">{previewPlayer.losses}</p>
-                </div>
-                <div className="bg-black/40 border border-white/10 rounded-xl p-4 transition-smooth hover:border-purple-500/50 hover:bg-purple-500/10 hover:shadow-[0_0_15px_rgba(168,85,247,0.3)]">
-                  <p className="text-gray-500 text-[10px] uppercase font-bold tracking-widest mb-1">Win Rate</p>
-                  <p className="font-cyber font-black text-xl sm:text-2xl text-purple-400">{wr.toFixed(1)}<span className="text-xs sm:text-sm">%</span></p>
-                </div>
-              </div>
+                  {/* Personalized tagline */}
+                  <p className="text-white/80 text-xs font-sans leading-relaxed font-medium">
+                    {gp > 0 
+                      ? `Rank #${pRank} • ${wr >= 60 ? 'Master' : wr >= 50 ? 'Elite' : 'Rising'} Contender with a ${wr.toFixed(1)}% win rate across ${gp} matches.`
+                      : `Rank #${pRank} • Global Contender. Ready to play their first match!`
+                    }
+                  </p>
 
-              {/* Total Matches */}
-              <div className="bg-white/5 rounded-full py-2 px-6 border border-white/10 inline-block mx-auto mb-2 text-sm text-gray-300">
-                Total Matches Played: <span className="font-cyber font-bold text-white">{gp}</span>
+                  {/* Stats Group & Pill Button */}
+                  <div className="flex items-center justify-between mt-1">
+                    {/* Stats Group with icons */}
+                    <div className="flex items-center gap-3.5 text-white/90">
+                      <div className="flex items-center" title="Wins">
+                        <svg className="w-4 h-4 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <span className="ml-1 text-sm font-sans font-extrabold tracking-wide">{previewPlayer.wins}</span>
+                      </div>
+                      <div className="flex items-center" title="Losses">
+                        <svg className="w-4 h-4 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        <span className="ml-1 text-sm font-sans font-extrabold tracking-wide">{previewPlayer.losses}</span>
+                      </div>
+                    </div>
+
+                    {/* Pill Button styled like Follow + */}
+                    <button
+                      onClick={() => { setPreviewPlayer(null); setClickCoords(null); }}
+                      className="bg-white text-black font-sans font-extrabold text-xs py-2.5 px-6 rounded-full shadow-[0_4px_12px_rgba(255,255,255,0.25)] hover:bg-white/90 active:scale-95 transition-all duration-200"
+                    >
+                      Close ✕
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          </>
         );
       })()}
     </div>
