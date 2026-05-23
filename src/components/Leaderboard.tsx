@@ -435,8 +435,6 @@ export const Leaderboard = ({
         const gp = mergedPlayer.wins + mergedPlayer.losses;
         const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
         const isCountingMode = !!(isGameActive && activeGamePlayerIds?.includes(previewPlayer.id));
-        const globalGp = (globalPlayer.wins || 0) + (globalPlayer.losses || 0);
-        const globalWr = globalGp > 0 ? (globalPlayer.wins / globalGp) * 100 : 0;
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
 
