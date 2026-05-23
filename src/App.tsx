@@ -980,7 +980,12 @@ export default function App() {
           )}
 
           {/* Global Leaderboard (Moved to Top) */}
-          {currentUser && !dbError && (
+          {currentUser && !dbError && (() => {
+            const isGameRunning = gamePlayers.length > 0;
+            const gamePlayerIds = gamePlayers.map((p) => p.id);
+            const gamePlayerNames = gamePlayers.map((p) => p.name.toLowerCase().trim());
+            
+            return (
             <div className="w-full max-w-2xl mb-8">
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px bg-gradient-to-r from-transparent to-cyan-500 flex-1 min-w-0" />
@@ -1002,9 +1007,9 @@ export default function App() {
                       onAdminEdit={handleOpenAdminEdit}
                       showTimeFilter={true}
                       isTestingMode={isTestingMode}
-                      isGameActive={gamePlayers.length > 0}
-                      activeGamePlayerIds={gamePlayers.map((p) => p.id)}
-                      activeGamePlayerNames={gamePlayers.map((p) => p.name)}
+                      isGameActive={isGameRunning}
+                      activeGamePlayerIds={gamePlayerIds}
+                      activeGamePlayerNames={gamePlayerNames}
                       onVotePlayer={handleVotePlayer}
                       currentUserId={currentUser?.uid}
                       refreshTrigger={leaderboardRefreshTrigger}
@@ -1019,7 +1024,8 @@ export default function App() {
                 }
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* Admin Setup Section */}
           {isAdmin && (

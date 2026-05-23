@@ -294,7 +294,11 @@ export const Leaderboard = ({
           const rank = idx + 1;
           const wr   = calculateWinRate(player.wins, player.losses);
           const gp   = player.wins + player.losses;
-          const isCountingRow = isGameActive && (activeGamePlayerIds?.includes(player.id) || activeGamePlayerNames?.some(name => name.toLowerCase() === player.name.toLowerCase()));
+          const playerNameLower = player.name.toLowerCase().trim();
+          const isCountingRow = isGameActive && (
+            activeGamePlayerIds?.includes(player.id) ||
+            activeGamePlayerNames?.includes(playerNameLower)
+          );
           const s    = rowBg(rank);
 
           return (
@@ -436,7 +440,11 @@ export const Leaderboard = ({
         };
         const gp = mergedPlayer.wins + mergedPlayer.losses;
         const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
-        const isCountingMode = !!(isGameActive && (activeGamePlayerIds?.includes(previewPlayer.id) || activeGamePlayerNames?.some(name => name.toLowerCase() === previewPlayer.name.toLowerCase())));
+        const previewPlayerNameLower = previewPlayer.name.toLowerCase().trim();
+        const isCountingMode = !!(isGameActive && (
+          activeGamePlayerIds?.includes(previewPlayer.id) ||
+          activeGamePlayerNames?.includes(previewPlayerNameLower)
+        ));
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
 
