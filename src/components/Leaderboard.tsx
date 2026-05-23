@@ -327,7 +327,7 @@ export const Leaderboard = ({
                       {player.name}
                     </p>
                     {isCountingRow && (
-                      <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
+                      <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
                         PLAYING
                       </span>
                     )}
@@ -379,7 +379,7 @@ export const Leaderboard = ({
                     <p className="font-cyber font-bold text-[11px] truncate"
                       style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
                     {isCountingRow && (
-                      <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
+                      <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_8px_rgba(34,197,94,0.15)]">
                         PLAYING
                       </span>
                     )}
@@ -529,7 +529,7 @@ export const Leaderboard = ({
                     <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
                   </div>
                   {isCountingMode && (
-                    <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-cyan-300">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-green-400 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
                       <span>⏱️</span>
                       <span>PLAYING</span>
                     </div>

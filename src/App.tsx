@@ -32,6 +32,7 @@ export default function App() {
   const [appMode, setAppMode] = useState<'profile' | 'game'>('game');
   const [playerCount, setPlayerCount] = useState<number>(2);
   const [gamePlayers, setGamePlayers] = useState<Player[]>([]);
+  const [activeGamePlayers, setActiveGamePlayers] = useState<{ id: string; name: string }[]>([]);
   const [historyStack, setHistoryStack] = useState<Player[][]>([]);
   const [redoStack, setRedoStack] = useState<Player[][]>([]);
   const [globalPlayers, setGlobalPlayers] = useState<Player[]>([]);
@@ -91,6 +92,38 @@ export default function App() {
     });
     return () => unsub();
   }, []);
+
+  // Listen to the active game players list from Firestore config (real-time sync for everyone)
+  useEffect(() => {
+    const docRef = doc(configCollection, isTestingMode ? 'active_game_beta' : 'active_game');
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setActiveGamePlayers(data.players || []);
+      } else {
+        setActiveGamePlayers([]);
+      }
+    }, (err) => {
+      console.warn('active_game listener failed:', err);
+    });
+    return () => unsub();
+  }, [isTestingMode]);
+
+  // Sync admin's current gamePlayers to Firestore (only runs for authenticated admins)
+  useEffect(() => {
+    if (isAdmin && currentUser) {
+      const docRef = doc(configCollection, isTestingMode ? 'active_game_beta' : 'active_game');
+      if (view === 'game' && gamePlayers.length > 0) {
+        setDoc(docRef, {
+          players: gamePlayers.map(p => ({ id: p.id, name: p.name }))
+        }, { merge: true }).catch(err => console.error("Failed to sync active game players:", err));
+      } else {
+        setDoc(docRef, {
+          players: []
+        }, { merge: true }).catch(err => console.error("Failed to clear active game players:", err));
+      }
+    }
+  }, [gamePlayers, view, isAdmin, currentUser, isTestingMode]);
 
   // Listen to admin permissions from Firestore
   useEffect(() => {
@@ -981,9 +1014,9 @@ export default function App() {
 
           {/* Global Leaderboard (Moved to Top) */}
           {currentUser && !dbError && (() => {
-            const isGameRunning = gamePlayers.length > 0;
-            const gamePlayerIds = gamePlayers.map((p) => p.id);
-            const gamePlayerNames = gamePlayers.map((p) => p.name.toLowerCase().trim());
+            const isGameRunning = activeGamePlayers.length > 0;
+            const gamePlayerIds = activeGamePlayers.map((p) => p.id);
+            const gamePlayerNames = activeGamePlayers.map((p) => p.name.toLowerCase().trim());
             
             return (
             <div className="w-full max-w-2xl mb-8">
@@ -1208,9 +1241,9 @@ export default function App() {
                 isAdmin={isAdmin}
                 canEditPlayers={hasPermission('edit_players')}
                 onAdminEdit={handleOpenAdminEdit}
-                isGameActive={true}
-                activeGamePlayerIds={gamePlayers.map((p) => p.id)}
-                activeGamePlayerNames={gamePlayers.map((p) => p.name)}
+                isGameActive={activeGamePlayers.length > 0}
+                activeGamePlayerIds={activeGamePlayers.map((p) => p.id)}
+                activeGamePlayerNames={activeGamePlayers.map((p) => p.name.toLowerCase().trim())}
                 onVotePlayer={handleVotePlayer}
                 currentUserId={currentUser?.uid}
                 refreshTrigger={leaderboardRefreshTrigger}
