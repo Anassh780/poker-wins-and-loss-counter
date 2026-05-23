@@ -1002,8 +1002,8 @@ export default function App() {
                       onAdminEdit={handleOpenAdminEdit}
                       showTimeFilter={true}
                       isTestingMode={isTestingMode}
-                      isGameActive={false}
-                      activeGamePlayerIds={[]}
+                      isGameActive={gamePlayers.length > 0}
+                      activeGamePlayerIds={gamePlayers.map((p) => p.id)}
                       onVotePlayer={handleVotePlayer}
                       currentUserId={currentUser?.uid}
                       refreshTrigger={leaderboardRefreshTrigger}

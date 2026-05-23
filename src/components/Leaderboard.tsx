@@ -322,7 +322,7 @@ export const Leaderboard = ({
                     </p>
                     {isCountingRow && (
                       <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
-                        Counting
+                        PLAYING
                       </span>
                     )}
                     {player.isCertified && (
@@ -374,7 +374,7 @@ export const Leaderboard = ({
                       style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
                     {isCountingRow && (
                       <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
-                        Counting
+                        PLAYING
                       </span>
                     )}
                     {player.isCertified && (
@@ -437,7 +437,6 @@ export const Leaderboard = ({
         const isCountingMode = !!(isGameActive && activeGamePlayerIds?.includes(previewPlayer.id));
         const globalGp = (globalPlayer.wins || 0) + (globalPlayer.losses || 0);
         const globalWr = globalGp > 0 ? (globalPlayer.wins / globalGp) * 100 : 0;
-        const votingEligible = isCountingMode ? globalWr >= 85 : wr >= 85;
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
 
@@ -515,71 +514,64 @@ export const Leaderboard = ({
               </p>
 
               {/* Counting Mode: Rating Display & Voting */}
-              {isCountingMode && (
-                <div className="flex flex-col gap-2 mt-0.5 bg-black/35 p-3 rounded-2xl border border-white/5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-[8px] uppercase tracking-wider text-purple-300 font-cyber font-bold">Player Rating</span>
-                      <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
-                    </div>
+              <div className="flex flex-col gap-2 mt-0.5 bg-black/35 p-3 rounded-2xl border border-white/5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] uppercase tracking-wider text-purple-300 font-cyber font-bold">Player Rating</span>
+                    <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
+                  </div>
+                  {isCountingMode && (
                     <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-cyan-300">
                       <span>⏱️</span>
-                      <span>COUNTING MODE</span>
-                    </div>
-                  </div>
-                  <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
-                  </div>
-
-                  {/* Voting Options: ONLY shown if player win rate >= 85% */}
-                  {votingEligible ? (
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <button
-                        onClick={async () => {
-                          if (isSelf) return;
-                          if (onVotePlayer) {
-                            await onVotePlayer(previewPlayer.id, 'like');
-                            // Dynamic local update for visual punch
-                            setPreviewPlayer(prev => prev ? { ...prev, likes: (prev.likes || 0) + 1 } : null);
-                          }
-                        }}
-                        disabled={isSelf}
-                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
-                          isSelf
-                            ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
-                            : 'bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500/20 hover:border-green-500/40 active:scale-95'
-                        }`}
-                        title={isSelf ? "Self-voting blocked" : "Played Wisely & Well (+0.2%)"}
-                      >
-                        <span>👍 Like</span>
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (isSelf) return;
-                          if (onVotePlayer) {
-                            await onVotePlayer(previewPlayer.id, 'dislike');
-                            // Dynamic local update for visual punch
-                            setPreviewPlayer(prev => prev ? { ...prev, dislikes: (prev.dislikes || 0) + 1 } : null);
-                          }
-                        }}
-                        disabled={isSelf}
-                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
-                          isSelf
-                            ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
-                            : 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/40 active:scale-95'
-                        }`}
-                        title={isSelf ? "Self-voting blocked" : "Poor Play (-0.2%)"}
-                      >
-                        <span>👎 Dislike</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-[8px] text-center text-gray-500 font-cyber py-1 border border-dashed border-white/5 rounded-lg mt-0.5">
-                      🔒 Rating votes unlocked at ≥85% Win Rate
+                      <span>PLAYING</span>
                     </div>
                   )}
                 </div>
-              )}
+                <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
+                </div>
+
+                {(onVotePlayer && isCountingMode && wr >= 85) ? (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <button
+                      onClick={async () => {
+                        if (isSelf) return;
+                        await onVotePlayer(previewPlayer.id, 'like');
+                        setPreviewPlayer(prev => prev ? { ...prev, likes: (prev.likes || 0) + 1 } : null);
+                      }}
+                      disabled={isSelf}
+                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
+                        isSelf
+                          ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
+                          : 'bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500/20 hover:border-green-500/40 active:scale-95'
+                      }`}
+                      title={isSelf ? "Self-voting blocked" : "Played Wisely & Well (+0.2%)"}
+                    >
+                      <span>👍 Like</span>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (isSelf) return;
+                        await onVotePlayer(previewPlayer.id, 'dislike');
+                        setPreviewPlayer(prev => prev ? { ...prev, dislikes: (prev.dislikes || 0) + 1 } : null);
+                      }}
+                      disabled={isSelf}
+                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
+                        isSelf
+                          ? 'bg-white/5 border-white/5 text-gray-500 cursor-not-allowed'
+                          : 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/40 active:scale-95'
+                      }`}
+                      title={isSelf ? "Self-voting blocked" : "Poor Play (-0.2%)"}
+                    >
+                      <span>👎 Dislike</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[8px] text-center text-gray-500 font-cyber py-1 border border-dashed border-white/5 rounded-lg mt-0.5">
+                    Voting is only available for active players with ≥85% win rate.
+                  </div>
+                )}
+              </div>
 
               {/* Stats Group & Pill Button */}
               <div className="flex items-center justify-between mt-1">
