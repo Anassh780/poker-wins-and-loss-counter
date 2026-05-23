@@ -1004,6 +1004,7 @@ export default function App() {
                       isTestingMode={isTestingMode}
                       isGameActive={gamePlayers.length > 0}
                       activeGamePlayerIds={gamePlayers.map((p) => p.id)}
+                      activeGamePlayerNames={gamePlayers.map((p) => p.name)}
                       onVotePlayer={handleVotePlayer}
                       currentUserId={currentUser?.uid}
                       refreshTrigger={leaderboardRefreshTrigger}
@@ -1203,6 +1204,7 @@ export default function App() {
                 onAdminEdit={handleOpenAdminEdit}
                 isGameActive={true}
                 activeGamePlayerIds={gamePlayers.map((p) => p.id)}
+                activeGamePlayerNames={gamePlayers.map((p) => p.name)}
                 onVotePlayer={handleVotePlayer}
                 currentUserId={currentUser?.uid}
                 refreshTrigger={leaderboardRefreshTrigger}
