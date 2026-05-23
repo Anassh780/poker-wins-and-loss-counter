@@ -292,6 +292,7 @@ export const Leaderboard = ({
           const rank = idx + 1;
           const wr   = calculateWinRate(player.wins, player.losses);
           const gp   = player.wins + player.losses;
+          const isCountingRow = isGameActive && activeGamePlayerIds?.includes(player.id);
           const s    = rowBg(rank);
 
           return (
@@ -319,6 +320,11 @@ export const Leaderboard = ({
                       style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
                       {player.name}
                     </p>
+                    {isCountingRow && (
+                      <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
+                        Counting
+                      </span>
+                    )}
                     {player.isCertified && (
                       <span className="text-yellow-400 flex-shrink-0 animate-pulse" title="Certified Player">
                         <svg className="w-4 h-4 text-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
@@ -366,6 +372,11 @@ export const Leaderboard = ({
                   <div className="flex items-center gap-1">
                     <p className="font-cyber font-bold text-[11px] truncate"
                       style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
+                    {isCountingRow && (
+                      <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-cyan-200 bg-cyan-500/10 border border-cyan-400/20 rounded-full px-2 py-0.5">
+                        Counting
+                      </span>
+                    )}
                     {player.isCertified && (
                       <span className="text-yellow-400 flex-shrink-0" title="Certified Player">
                         <svg className="w-3.5 h-3.5 text-yellow-400 drop-shadow-[0_0_4px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
@@ -424,6 +435,9 @@ export const Leaderboard = ({
         const gp = mergedPlayer.wins + mergedPlayer.losses;
         const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
         const isCountingMode = !!(isGameActive && activeGamePlayerIds?.includes(previewPlayer.id));
+        const globalGp = (globalPlayer.wins || 0) + (globalPlayer.losses || 0);
+        const globalWr = globalGp > 0 ? (globalPlayer.wins / globalGp) * 100 : 0;
+        const votingEligible = isCountingMode ? globalWr >= 85 : wr >= 85;
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
 
@@ -503,18 +517,22 @@ export const Leaderboard = ({
               {/* Counting Mode: Rating Display & Voting */}
               {isCountingMode && (
                 <div className="flex flex-col gap-2 mt-0.5 bg-black/35 p-3 rounded-2xl border border-white/5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-col">
                       <span className="text-[8px] uppercase tracking-wider text-purple-300 font-cyber font-bold">Player Rating</span>
                       <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
                     </div>
-                    <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
+                    <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-cyan-300">
+                      <span>⏱️</span>
+                      <span>COUNTING MODE</span>
                     </div>
+                  </div>
+                  <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
                   </div>
 
                   {/* Voting Options: ONLY shown if player win rate >= 85% */}
-                  {wr >= 85 ? (
+                  {votingEligible ? (
                     <div className="flex items-center gap-1.5 mt-1">
                       <button
                         onClick={async () => {
