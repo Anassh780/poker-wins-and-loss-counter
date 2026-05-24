@@ -453,6 +453,102 @@ const DeckPile: FC<{ count: number; isShuffling: boolean }> = ({ count, isShuffl
 );
 
 // ══════════════════════════════════════════════════════════════════════════════
+// FAN HAND — cards overlapping in a fan, only rank+suit corner visible
+// ══════════════════════════════════════════════════════════════════════════════
+const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ cards, faceDown, isMe }) => {
+  if (cards.length === 0) return null;
+
+  // Fan parameters — tighter for opponents, wider for player
+  const maxFanWidth = isMe ? 160 : 80;   // total width of the fan
+  const cardW = isMe ? 46 : 32;          // visible card width
+  const cardH = isMe ? 64 : 44;          // card height
+  const n = cards.length;
+  const spread = Math.min(maxFanWidth / Math.max(n - 1, 1), isMe ? 22 : 14);
+  const totalW = cardW + spread * (n - 1);
+  const maxRot = isMe ? 3 : 2;           // max rotation degrees per card
+
+  return (
+    <div style={{ position:'relative', width: totalW, height: cardH + 8, flexShrink:0 }}>
+      {cards.map((card, i) => {
+        const rot = n > 1 ? ((i / (n - 1)) - 0.5) * maxRot * 2 : 0;
+        const x = i * spread;
+        const yOffset = Math.abs(rot) * 0.5; // slight arc
+        return (
+          <div key={i} style={{
+            position:'absolute', left: x, top: yOffset,
+            zIndex: i,
+            transform: `rotate(${rot}deg)`,
+            animation: `dealIn 0.3s ease-out ${i * 0.04}s both`,
+            transformOrigin: 'bottom center',
+          }}>
+            {faceDown ? (
+              // Face-down: show blue card back, compact size
+              <div style={{
+                width: cardW, height: cardH, borderRadius: 5,
+                background: 'linear-gradient(135deg,#1e3a8a,#1d4ed8)',
+                border: '1.5px solid #fff',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+              }}>
+                <div style={{
+                  width: cardW - 8, height: cardH - 8, borderRadius: 3,
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'repeating-linear-gradient(45deg,rgba(255,255,255,0.03) 0,rgba(255,255,255,0.03) 2px,transparent 2px,transparent 8px)',
+                }} />
+              </div>
+            ) : (
+              // Face-up: show rank+suit corner card
+              <div style={{
+                width: cardW, height: cardH, borderRadius: 5,
+                background: '#fff', border: '1.5px solid #ccc',
+                boxShadow: '0 3px 8px rgba(0,0,0,0.35)',
+                display:'flex', flexDirection:'column',
+                padding: '2px 3px', boxSizing:'border-box',
+                overflow:'hidden',
+              }}>
+                {/* Top-left corner */}
+                <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', lineHeight:1 }}>
+                  <span style={{
+                    fontSize: isMe ? 11 : 8, fontWeight:900,
+                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
+                    fontFamily:'Arial Black,Arial,sans-serif', lineHeight:1,
+                  }}>{card.rank}</span>
+                  <span style={{
+                    fontSize: isMe ? 10 : 7,
+                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
+                    lineHeight:1,
+                  }}>{card.suit}</span>
+                </div>
+                {/* Center suit */}
+                <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <span style={{
+                    fontSize: isMe ? 18 : 12,
+                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
+                  }}>{card.suit}</span>
+                </div>
+                {/* Bottom-right corner (rotated) */}
+                <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', lineHeight:1, transform:'rotate(180deg)' }}>
+                  <span style={{
+                    fontSize: isMe ? 11 : 8, fontWeight:900,
+                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
+                    fontFamily:'Arial Black,Arial,sans-serif', lineHeight:1,
+                  }}>{card.rank}</span>
+                  <span style={{
+                    fontSize: isMe ? 10 : 7,
+                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
+                    lineHeight:1,
+                  }}>{card.suit}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PLAYER SEAT
 // ══════════════════════════════════════════════════════════════════════════════
 const PlayerSeat: FC<{
@@ -468,75 +564,65 @@ const PlayerSeat: FC<{
   const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
 
   useEffect(() => { if (revealed && isMe) setShowCards(true); }, [revealed, isMe]);
-  // Bots auto-reveal after dealing
-  useEffect(() => { if (isBot && dealtCards.length > 0) setShowCards(false); }, [isBot, dealtCards.length]);
+
+  const avatarSize = isMe ? 44 : 36;
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, minWidth:80 }}>
-      {/* Avatar */}
-      <div style={{ position:'relative' }}>
-        <div style={{
-          width: isMe ? 50 : 42, height: isMe ? 50 : 42, borderRadius:'50%', overflow:'hidden',
-          border: isMe ? '3px solid #4ade80' : isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.25)',
-          boxShadow: isMe ? '0 0 16px rgba(74,222,128,0.6)' : isBot ? `0 0 12px ${levelColor}44` : '0 2px 8px rgba(0,0,0,0.5)',
-          background: isBot ? `linear-gradient(135deg,#1d4ed8,#7c3aed)` : 'linear-gradient(135deg,#16a34a,#7c3aed)',
-          display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:isBot?20:15, color:'#fff',
-        }}>
-          {!isBot && player.avatar
-            ? <img src={player.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
-            : isBot ? BOT_CONFIGS[player.botLevel||'rookie'].emoji
-            : player.name[0]?.toUpperCase()
-          }
-        </div>
-        {isThinking && (
-          <div style={{ position:'absolute', top:-6, right:-6, background:'#1d4ed8', borderRadius:'50%', width:18, height:18, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, animation:'pulse 0.6s infinite' }}>
-            💭
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
+      {/* Fan of cards ABOVE avatar for opponents, BELOW for me */}
+      {!isMe && dealtCards.length > 0 && (
+        <FanHand cards={dealtCards} faceDown={true} isMe={false} />
+      )}
+
+      {/* Avatar + name row */}
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+        <div style={{ position:'relative' }}>
+          <div style={{
+            width: avatarSize, height: avatarSize, borderRadius:'50%', overflow:'hidden',
+            border: isMe ? '2.5px solid #4ade80' : isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.3)',
+            boxShadow: isMe ? '0 0 14px rgba(74,222,128,0.5)' : '0 2px 6px rgba(0,0,0,0.5)',
+            background: isBot ? 'linear-gradient(135deg,#1d4ed8,#7c3aed)' : 'linear-gradient(135deg,#16a34a,#7c3aed)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontWeight:900, fontSize: isBot ? 18 : 14, color:'#fff', flexShrink:0,
+          }}>
+            {!isBot && player.avatar
+              ? <img src={player.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
+              : isBot ? BOT_CONFIGS[player.botLevel||'rookie'].emoji
+              : player.name[0]?.toUpperCase()
+            }
           </div>
-        )}
-      </div>
-
-      {/* Name tag */}
-      <div style={{ background:'rgba(0,0,0,0.8)', borderRadius:7, padding:'2px 7px', textAlign:'center', maxWidth:100 }}>
-        <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight:900, fontSize:10, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:90 }}>
-          {isMe ? 'YOU' : player.name}
-        </p>
-        {isBot && botDecision && !isThinking && (
-          <p style={{ color:'#6b7280', fontSize:9, fontStyle:'italic', maxWidth:90, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            "{botDecision.comment}"
+          {isThinking && (
+            <div style={{ position:'absolute', top:-5, right:-5, background:'#1d4ed8', borderRadius:'50%', width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, animation:'pulse 0.6s infinite' }}>💭</div>
+          )}
+        </div>
+        <div style={{ background:'rgba(0,0,0,0.82)', borderRadius:6, padding:'1px 6px', maxWidth:90 }}>
+          <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight:900, fontSize:9, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:86, margin:0 }}>
+            {isMe ? 'YOU' : player.name}
           </p>
-        )}
+          {isBot && botDecision && !isThinking && (
+            <p style={{ color:'#6b7280', fontSize:8, fontStyle:'italic', margin:0, maxWidth:86, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+              "{botDecision.comment}"
+            </p>
+          )}
+          {isBot && botDecision && (
+            <p style={{ color: levelColor, fontSize:8, fontWeight:900, margin:0 }}>{botDecision.handInfo.description}</p>
+          )}
+        </div>
       </div>
 
-      {/* Cards */}
-      {dealtCards.length > 0 && (
-        <div style={{ display:'flex', gap: isMe ? 3 : -10, flexWrap:'wrap', justifyContent:'center', maxWidth: isMe ? 320 : 72 }}>
-          {dealtCards.map((card, i) => (
-            <div key={i} style={{ animation:`dealIn 0.35s ease-out ${i*0.05}s both` }}>
-              {(isMe && showCards)
-                ? <PlayingCard card={card} small={dealtCards.length > 10} />
-                : <PlayingCard faceDown small />
-              }
-            </div>
-          ))}
+      {/* My cards below avatar */}
+      {isMe && dealtCards.length > 0 && (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+          <FanHand cards={dealtCards} faceDown={!showCards} isMe={true} />
+          {!showCards ? (
+            <button onClick={() => { setShowCards(true); onReveal(); }}
+              style={{ padding:'4px 14px', borderRadius:7, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', fontWeight:900, fontSize:10, border:'none', cursor:'pointer', boxShadow:'0 2px 8px rgba(22,163,74,0.4)' }}>
+              👁 SEE MY CARDS
+            </button>
+          ) : (
+            <span style={{ fontSize:9, color:'#4ade80', fontWeight:700 }}>✓ Cards revealed</span>
+          )}
         </div>
-      )}
-
-      {/* Bot hand info after reveal */}
-      {isBot && botDecision && dealtCards.length > 0 && (
-        <div style={{ background:'rgba(0,0,0,0.7)', borderRadius:6, padding:'2px 8px', border:`1px solid ${levelColor}44` }}>
-          <span style={{ color: levelColor, fontSize:9, fontWeight:900 }}>{botDecision.handInfo.description}</span>
-        </div>
-      )}
-
-      {/* See cards button for human */}
-      {isMe && dealtCards.length > 0 && !showCards && (
-        <button onClick={() => { setShowCards(true); onReveal(); }}
-          style={{ marginTop:2, padding:'4px 12px', borderRadius:7, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', fontWeight:900, fontSize:10, border:'none', cursor:'pointer', boxShadow:'0 2px 8px rgba(22,163,74,0.5)' }}>
-          👁 SEE CARDS
-        </button>
-      )}
-      {isMe && showCards && dealtCards.length > 0 && (
-        <span style={{ fontSize:9, color:'#4ade80', fontWeight:700 }}>✓ Revealed</span>
       )}
     </div>
   );
@@ -552,20 +638,16 @@ const PokerTable: FC<{
   const isHost = myId === room.hostId;
   const perPlayer = Math.floor(52 / room.players.length);
 
-  // Put "me" at seat 0
   const myIndex = room.players.findIndex(p => p.id === myId);
   const ordered = myIndex >= 0
     ? [...room.players.slice(myIndex), ...room.players.slice(0, myIndex)]
     : room.players;
 
-  // Dealing animation
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [deckLeft, setDeckLeft] = useState(52);
   const [isShuffling, setIsShuffling] = useState(false);
   const [dealDone, setDealDone] = useState(false);
   const dealRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Bot state
   const [botDecisions, setBotDecisions] = useState<Record<string, { action: string; comment: string; handInfo: HandEval } | null>>({});
   const [thinkingBots, setThinkingBots] = useState<Set<string>>(new Set());
 
@@ -579,14 +661,8 @@ const PokerTable: FC<{
       const players = room.players;
       const total = perPlayer * players.length;
       let cardIdx = 0;
-
       const dealNext = () => {
-        if (cardIdx >= total) {
-          setDeckLeft(52 - total);
-          // Trigger bot thinking after all cards dealt
-          triggerBotThinking();
-          return;
-        }
+        if (cardIdx >= total) { setDeckLeft(52 - total); triggerBotThinking(); return; }
         const pid = players[cardIdx % players.length].id;
         setVisibleCounts(prev => ({ ...prev, [pid]: (prev[pid] || 0) + 1 }));
         setDeckLeft(prev => Math.max(0, prev - 1));
@@ -599,17 +675,12 @@ const PokerTable: FC<{
   }, [room.status]);
 
   const triggerBotThinking = () => {
-    const bots = room.players.filter(p => p.isBot);
-    bots.forEach((bot, i) => {
+    room.players.filter(p => p.isBot).forEach((bot, i) => {
       const cfg = BOT_CONFIGS[bot.botLevel || 'rookie'];
-      const [minT, maxT] = cfg.thinkMs;
-      const thinkTime = minT + Math.random() * (maxT - minT) + i * 300;
-
+      const thinkTime = cfg.thinkMs[0] + Math.random() * (cfg.thinkMs[1] - cfg.thinkMs[0]) + i * 300;
       setThinkingBots(prev => new Set([...prev, bot.id]));
-
       setTimeout(() => {
-        const cards = room.hands[bot.id] || [];
-        const decision = botDecide(cards, bot.botLevel || 'rookie');
+        const decision = botDecide(room.hands[bot.id] || [], bot.botLevel || 'rookie');
         setBotDecisions(prev => ({ ...prev, [bot.id]: decision }));
         setThinkingBots(prev => { const s = new Set(prev); s.delete(bot.id); return s; });
       }, thinkTime);
@@ -617,51 +688,38 @@ const PokerTable: FC<{
   };
 
   const allDealt = ordered.every(p => (visibleCounts[p.id] || 0) >= perPlayer);
-
-  // Find winner among bots (highest hand score)
   const botWinner = allDealt && Object.keys(botDecisions).length > 0
-    ? room.players
-        .filter(p => p.isBot && botDecisions[p.id]?.action === 'play')
+    ? room.players.filter(p => p.isBot && botDecisions[p.id]?.action === 'play')
         .sort((a, b) => (botDecisions[b.id]?.handInfo.score || 0) - (botDecisions[a.id]?.handInfo.score || 0))[0]
     : null;
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
-      {/* Table */}
-      <div style={{ flex:1, position:'relative', padding:'10px 6px 0', minHeight:300 }}>
-        {/* Wood border */}
-        <div style={{ position:'absolute', inset:6, borderRadius:'50%', background:'linear-gradient(145deg,#8B5E3C,#5C3A1E,#8B5E3C)', boxShadow:'0 8px 40px rgba(0,0,0,0.8)' }} />
-        {/* Green felt */}
-        <div style={{ position:'absolute', inset:24, borderRadius:'50%', background:'radial-gradient(ellipse at center,#1a6b2e 0%,#145a25 50%,#0f4a1e 100%)', boxShadow:'inset 0 4px 30px rgba(0,0,0,0.4)' }}>
-          <div style={{ position:'absolute', inset:0, borderRadius:'50%', opacity:0.05, backgroundImage:'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize:'8px 8px' }} />
+      {/* Table — overflow:hidden keeps cards inside */}
+      <div style={{ flex:1, position:'relative', overflow:'hidden', minHeight:0 }}>
+        <div style={{ position:'absolute', inset:0, background:'#0a1f0a' }} />
+        {/* Wood border ellipse */}
+        <div style={{ position:'absolute', top:'4%', left:'3%', right:'3%', bottom:'4%', borderRadius:'50%', background:'linear-gradient(145deg,#8B5E3C,#5C3A1E,#8B5E3C)', boxShadow:'0 6px 30px rgba(0,0,0,0.8)' }} />
+        {/* Green felt ellipse */}
+        <div style={{ position:'absolute', top:'9%', left:'7%', right:'7%', bottom:'9%', borderRadius:'50%', background:'radial-gradient(ellipse at center,#1a6b2e 0%,#145a25 55%,#0f4a1e 100%)', boxShadow:'inset 0 4px 24px rgba(0,0,0,0.4)' }}>
+          <div style={{ position:'absolute', inset:0, borderRadius:'50%', opacity:0.04, backgroundImage:'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize:'8px 8px' }} />
         </div>
 
         {/* Center deck */}
-        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
           <DeckPile count={deckLeft} isShuffling={isShuffling} />
-          {isShuffling && (
-            <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#4ade80', fontWeight:900, fontSize:11, letterSpacing:2, animation:'pulse 0.8s infinite' }}>
-              🔀 SHUFFLING...
-            </div>
-          )}
-          {botWinner && allDealt && (
-            <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'4px 10px', color:'#f59e0b', fontWeight:900, fontSize:10, textAlign:'center', marginTop:4 }}>
-              🏆 {botWinner.name} wins!
-            </div>
-          )}
+          {isShuffling && <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#4ade80', fontWeight:900, fontSize:11, letterSpacing:2, animation:'pulse 0.8s infinite' }}>🔀 SHUFFLING...</div>}
+          {botWinner && allDealt && <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#f59e0b', fontWeight:900, fontSize:10 }}>🏆 {botWinner.name}</div>}
         </div>
 
-        {/* Seats */}
-        <div style={{ position:'absolute', inset:0 }}>
+        {/* Seats — absolutely positioned, no overflow */}
+        <div style={{ position:'absolute', inset:0, zIndex:20 }}>
           {ordered.map((player, seatIdx) => (
-            <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length), zIndex:20 }}>
+            <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length) }}>
               <PlayerSeat
-                player={player}
-                cards={room.hands[player.id] || []}
-                isMe={player.id === myId}
-                revealed={room.revealedBy.includes(player.id)}
-                onReveal={onReveal}
-                visibleCount={visibleCounts[player.id] || 0}
+                player={player} cards={room.hands[player.id] || []}
+                isMe={player.id === myId} revealed={room.revealedBy.includes(player.id)}
+                onReveal={onReveal} visibleCount={visibleCounts[player.id] || 0}
                 botDecision={player.isBot ? (botDecisions[player.id] || null) : null}
                 isThinking={player.isBot ? thinkingBots.has(player.id) : false}
               />
@@ -671,7 +729,7 @@ const PokerTable: FC<{
       </div>
 
       {/* Action bar */}
-      <div style={{ padding:'8px 14px 12px', display:'flex', gap:8, alignItems:'center', background:'rgba(0,0,0,0.65)', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+      <div style={{ padding:'8px 14px 10px', display:'flex', gap:8, alignItems:'center', background:'rgba(0,0,0,0.7)', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
         <div style={{ flex:1, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
           <span style={{ color:'#4ade80', fontSize:11, fontWeight:700, fontFamily:'monospace', letterSpacing:2 }}>{room.roomId}</span>
           <span style={{ color:'#6b7280', fontSize:10 }}>• {room.players.filter(p=>!p.isBot).length} human{room.players.filter(p=>p.isBot).length>0?` + ${room.players.filter(p=>p.isBot).length} bot`:''}</span>
