@@ -396,3 +396,23 @@ body.ui-royal .card-vip {
   border: 1px solid rgba(212,175,55,0.4) !important;
   box-shadow: 0 0 20px rgba(212,175,55,0.1) !important;
 }
+
+/* ────────────────────────────────────────────────────────────
+ * Poker Arena Animations
+ * ──────────────────────────────────────────────────────────── */
+@keyframes dealIn {
+  0%   { opacity: 0; transform: translateY(-40px) scale(0.7) rotate(-8deg); }
+  60%  { opacity: 1; transform: translateY(4px) scale(1.05) rotate(1deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+@keyframes bounce {
+  from { transform: translateY(0); opacity: 0.5; }
+  to   { transform: translateY(-6px); opacity: 1; }
+}
+
+@keyframes cardFlip {
+  0%   { transform: rotateY(0deg); }
+  50%  { transform: rotateY(90deg); }
+  100% { transform: rotateY(0deg); }
+}

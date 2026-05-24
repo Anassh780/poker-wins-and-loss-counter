@@ -6,3 +6,5 @@ export { PlayerControls } from './PlayerControls';
 export { AdminEditModal } from './AdminEditModal';
 export { AdminManagement } from './AdminManagement';
 export { ErrorSidebar } from './ErrorSidebar';
+export { PokerArena } from './PokerArena';
+export { PlayingCard } from './PlayingCard';

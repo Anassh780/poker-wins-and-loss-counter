@@ -7,6 +7,7 @@ import {
   PlayerControls,
   AdminEditModal,
   ErrorSidebar,
+  PokerArena,
 } from './components';
 import { ProfileModal } from './components/ProfileModal';
 import { ProfileView } from './components/ProfileView';
@@ -22,7 +23,7 @@ import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
 import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc, runTransaction } from 'firebase/firestore';
 import './index.css';
 
 type View = 'setup' | 'game' | 'result';
@@ -30,6 +31,7 @@ type View = 'setup' | 'game' | 'result';
 export default function App() {
   const [view, setView] = useState<View>('setup');
   const [appMode, setAppMode] = useState<'profile' | 'game'>('game');
+  const [showArena, setShowArena] = useState(false);
   const [playerCount, setPlayerCount] = useState<number>(2);
   const [gamePlayers, setGamePlayers] = useState<Player[]>([]);
   const [activeGamePlayers, setActiveGamePlayers] = useState<{ id: string; name: string }[]>([]);
@@ -52,6 +54,13 @@ export default function App() {
   const [mobileTab, setMobileTab] = useState<'controls' | 'leaderboard'>('leaderboard');
   const [dbError, setDbError] = useState<string | null>(null);
   const [showResultBackup, setShowResultBackup] = useState(false);
+
+  // Voting system state
+  const [currentGameId, setCurrentGameId] = useState<string>(() => localStorage.getItem('ct-gameId') || '');
+  const [activeGameId, setActiveGameId] = useState<string>('');
+  const [activeGameStatus, setActiveGameStatus] = useState<'active' | 'ended' | ''>('');
+  const [hasVotedInCurrentGame, setHasVotedInCurrentGame] = useState(false);
+  const [isSubmittingVote, setIsSubmittingVote] = useState(false);
   
   // Admin logic
   const [adminEditingPlayer, setAdminEditingPlayer] = useState<Player | null>(null);
@@ -99,9 +108,14 @@ export default function App() {
     const unsub = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
+        const status = data.status === 'active' || data.status === 'ended' ? data.status : '';
         setActiveGamePlayers(data.players || []);
+        setActiveGameId(data.gameId || '');
+        setActiveGameStatus(status);
       } else {
         setActiveGamePlayers([]);
+        setActiveGameId('');
+        setActiveGameStatus('');
       }
     }, (err) => {
       console.warn('active_game listener failed:', err);
@@ -115,15 +129,25 @@ export default function App() {
       const docRef = doc(configCollection, isTestingMode ? 'active_game_beta' : 'active_game');
       if (view === 'game' && gamePlayers.length > 0) {
         setDoc(docRef, {
-          players: gamePlayers.map(p => ({ id: p.id, name: p.name }))
+          players: gamePlayers.map(p => ({ id: p.id, name: p.name })),
+          gameId: currentGameId,
+          status: 'active',
         }, { merge: true }).catch(err => console.error("Failed to sync active game players:", err));
+      } else if (view === 'result') {
+        setDoc(docRef, {
+          players: gamePlayers.map(p => ({ id: p.id, name: p.name })),
+          gameId: currentGameId,
+          status: 'ended',
+        }, { merge: true }).catch(err => console.error("Failed to update game status to ended:", err));
       } else {
         setDoc(docRef, {
-          players: []
+          players: [],
+          gameId: '',
+          status: 'ended',
         }, { merge: true }).catch(err => console.error("Failed to clear active game players:", err));
       }
     }
-  }, [gamePlayers, view, isAdmin, currentUser, isTestingMode]);
+  }, [gamePlayers, view, isAdmin, currentUser, isTestingMode, currentGameId]);
 
   // Listen to admin permissions from Firestore
   useEffect(() => {
@@ -232,6 +256,26 @@ export default function App() {
     });
     return () => unsub();
   }, [isTestingMode]);  // Re-run whenever they switch beta databases
+
+  // Listen for current user's vote in the active game
+  useEffect(() => {
+    if (!currentUser || !activeGameId) {
+      setHasVotedInCurrentGame(false);
+      setIsSubmittingVote(false);
+      return;
+    }
+    const votesColl = isTestingMode ? 'votes_beta' : 'votes';
+    const voteDocId = `${activeGameId}_${currentUser.uid}`;
+    const unsub = onSnapshot(doc(db, votesColl, voteDocId), (snap) => {
+      setHasVotedInCurrentGame(snap.exists());
+      setIsSubmittingVote(false);
+    }, (err) => {
+      console.warn('Vote listener failed:', err);
+      setHasVotedInCurrentGame(false);
+      setIsSubmittingVote(false);
+    });
+    return () => unsub();
+  }, [activeGameId, currentUser, isTestingMode]);
 
   // Registration Hook
   useEffect(() => {
@@ -367,6 +411,9 @@ export default function App() {
   const sessionDuration = sessionStartTime && currentTime ? currentTime - sessionStartTime : 0;
 
   const handleStartGame = (count: number) => {
+    const newGameId = `game_${Date.now()}`;
+    setCurrentGameId(newGameId);
+    localStorage.setItem('ct-gameId', newGameId);
     setPlayerCount(count);
     setGamePlayers([]);
     setEditingPlayer(null);
@@ -481,27 +528,62 @@ export default function App() {
     return winRate >= 85 && rating >= 75;
   };
 
-  const handleVotePlayer = async (playerId: string, voteType: 'like' | 'dislike'): Promise<void> => {
+  const handleVotePlayer = async (playerId: string, voteType: 'like' | 'dislike'): Promise<boolean> => {
     const player = globalPlayers.find((p) => p.id === playerId);
-    if (!player) return;
+    if (!player || !currentUser || !activeGameId) return false;
 
-    const currentLikes = player.likes || 0;
-    const currentDislikes = player.dislikes || 0;
-    const newLikes = voteType === 'like' ? currentLikes + 1 : currentLikes;
-    const newDislikes = voteType === 'dislike' ? currentDislikes + 1 : currentDislikes;
+    // Block self-voting even if a stale UI tries to call this handler.
+    if (playerId === currentUser.uid) return false;
 
-    const isCertified = checkPlayerCertification(player.wins, player.losses, newLikes, newDislikes);
+    // Block if user already voted in this game
+    if (hasVotedInCurrentGame || isSubmittingVote) return false;
+
+    // Block if game is not active
+    if (activeGameStatus !== 'active') return false;
 
     try {
-      await setDoc(
-        doc(activeUsersColl, playerId),
-        {
+      setIsSubmittingVote(true);
+      const votesColl = isTestingMode ? 'votes_beta' : 'votes';
+      const voteDocId = `${activeGameId}_${currentUser.uid}`;
+      const voteRef = doc(db, votesColl, voteDocId);
+      const playerRef = doc(activeUsersColl, playerId);
+      const voterProfile = globalPlayers.find(p => p.id === currentUser.uid);
+
+      const voteResult = await runTransaction(db, async (transaction) => {
+        const existingVote = await transaction.get(voteRef);
+        if (existingVote.exists()) {
+          throw new Error('already-voted');
+        }
+
+        const playerSnap = await transaction.get(playerRef);
+        const storedPlayer = playerSnap.data() as Partial<Player> | undefined;
+        const currentLikes = typeof storedPlayer?.likes === 'number' ? storedPlayer.likes : player.likes || 0;
+        const currentDislikes = typeof storedPlayer?.dislikes === 'number' ? storedPlayer.dislikes : player.dislikes || 0;
+        const finalWins = typeof storedPlayer?.wins === 'number' ? storedPlayer.wins : player.wins;
+        const finalLosses = typeof storedPlayer?.losses === 'number' ? storedPlayer.losses : player.losses;
+        const newLikes = voteType === 'like' ? currentLikes + 1 : currentLikes;
+        const newDislikes = voteType === 'dislike' ? currentDislikes + 1 : currentDislikes;
+        const isCertified = checkPlayerCertification(finalWins, finalLosses, newLikes, newDislikes);
+
+        transaction.set(voteRef, {
+          gameId: activeGameId,
+          voterId: currentUser.uid,
+          voterName: voterProfile?.name || currentUser.displayName || 'Unknown',
+          voterAvatar: voterProfile?.avatar || currentUser.photoURL || '',
+          targetPlayerId: playerId,
+          targetPlayerName: player.name,
+          voteType,
+          timestamp: Date.now(),
+        });
+
+        transaction.set(playerRef, {
           likes: newLikes,
           dislikes: newDislikes,
           isCertified,
-        },
-        { merge: true }
-      );
+        }, { merge: true });
+
+        return { newLikes, newDislikes, isCertified };
+      });
 
       // Keep local gamePlayers in sync in real-time
       setGamePlayers((prev) =>
@@ -509,15 +591,25 @@ export default function App() {
           p.id === playerId
             ? {
                 ...p,
-                likes: newLikes,
-                dislikes: newDislikes,
-                isCertified,
+                likes: voteResult.newLikes,
+                dislikes: voteResult.newDislikes,
+                isCertified: voteResult.isCertified,
               }
             : p
         )
       );
+      setHasVotedInCurrentGame(true);
+      setIsSubmittingVote(false);
+      return true;
     } catch (e) {
+      if (e instanceof Error && e.message === 'already-voted') {
+        setHasVotedInCurrentGame(true);
+        setIsSubmittingVote(false);
+        return false;
+      }
       console.error("Failed to save vote", e);
+      setIsSubmittingVote(false);
+      return false;
     }
   };
 
@@ -574,6 +666,9 @@ export default function App() {
 
   const handleStartGameWithSelected = () => {
     if (selectedPlayers.length < 2) return;
+    const newGameId = `game_${Date.now()}`;
+    setCurrentGameId(newGameId);
+    localStorage.setItem('ct-gameId', newGameId);
     const playersToStart = globalPlayers.filter(p => selectedPlayers.includes(p.id)).map(p => ({
       ...p,
       wins: 0,
@@ -884,6 +979,7 @@ export default function App() {
           onClose={() => setShowProfile(false)}
           onAvatarChange={handleAvatarChange}
           currentAvatar={profileAvatar}
+          isTestingMode={isTestingMode}
         />
       )}
 
@@ -936,6 +1032,7 @@ export default function App() {
             onAvatarChange={handleAvatarChange}
             currentAvatar={profileAvatar}
             activeUsersColl={activeUsersColl}
+            isTestingMode={isTestingMode}
           />
         </div>
       </div>
@@ -1002,6 +1099,22 @@ export default function App() {
               <p className="text-gray-500 text-sm">Multiplayer Win/Loss Ranking System</p>
               <div className="h-px w-32 bg-gradient-to-r from-transparent via-cyan-500 to-transparent mx-auto mt-4" />
             </div>
+
+            {/* Poker Arena Entry Button */}
+            <button
+              onClick={() => setShowArena(true)}
+              className="w-full py-3 rounded-2xl font-black text-base tracking-widest transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95"
+              style={{
+                background: 'linear-gradient(135deg, #1a0533 0%, #2d0a5e 50%, #1a0533 100%)',
+                border: '1.5px solid rgba(168,85,247,0.5)',
+                boxShadow: '0 0 24px rgba(168,85,247,0.2), inset 0 1px 0 rgba(255,255,255,0.05)',
+                color: '#e879f9',
+              }}
+            >
+              <span style={{ fontSize: '1.4rem' }}>🃏</span>
+              <span>POKER ARENA</span>
+              <span className="text-xs font-normal opacity-60 ml-1">Deal Cards Online</span>
+            </button>
           </div>
 
           {/* Database Error Banner */}
@@ -1046,6 +1159,8 @@ export default function App() {
                       onVotePlayer={handleVotePlayer}
                       currentUserId={currentUser?.uid}
                       refreshTrigger={leaderboardRefreshTrigger}
+                      hasVotedInCurrentGame={hasVotedInCurrentGame}
+                      activeGameStatus={activeGameStatus}
                     />
                   : (
                     <div className="text-center py-10">
@@ -1247,6 +1362,8 @@ export default function App() {
                 onVotePlayer={handleVotePlayer}
                 currentUserId={currentUser?.uid}
                 refreshTrigger={leaderboardRefreshTrigger}
+                hasVotedInCurrentGame={hasVotedInCurrentGame}
+                activeGameStatus={activeGameStatus}
               />
             </div>
           </div>
@@ -1275,6 +1392,15 @@ export default function App() {
             onDelete={handleAdminDelete}
             onClose={() => setAdminEditingPlayer(null)}
             canDelete={adminEditTimeRange === 'all'}
+          />
+        )}
+
+        {/* Poker Arena Overlay */}
+        {showArena && (
+          <PokerArena
+            currentUser={currentUser}
+            globalPlayers={globalPlayers}
+            onClose={() => setShowArena(false)}
           />
         )}
       </div>
@@ -1384,6 +1510,7 @@ export default function App() {
             }}
             onAvatarChange={handleAvatarChange}
             currentAvatar={profileAvatar}
+            isTestingMode={isTestingMode}
           />
         )}
       </div>
