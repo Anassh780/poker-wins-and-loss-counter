@@ -4,17 +4,17 @@ import { db } from '../lib/firebase';
 import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// TYPES
+// ══════════════════════════════════════════════════════════════════════════════
+interface ArenaPlayer { id: string; name: string; avatar: string; isBot?: boolean; botLevel?: BotLevel; }
+
 interface ArenaRoom {
-  roomId: string;
-  hostId: string;
-  players: { id: string; name: string; avatar: string }[];
-  status: 'waiting' | 'shuffling' | 'dealing' | 'reveal' | 'done';
-  deck: CardData[];
-  hands: Record<string, CardData[]>;
-  revealedBy: string[];
-  dealStep: number; // which card index is currently being dealt (for animation)
-  createdAt: number;
+  roomId: string; hostId: string;
+  players: ArenaPlayer[];
+  status: 'waiting' | 'shuffling' | 'reveal' | 'done';
+  deck: CardData[]; hands: Record<string, CardData[]>;
+  revealedBy: string[]; dealStep: number; createdAt: number;
 }
 
 interface PokerArenaProps {
@@ -23,16 +23,119 @@ interface PokerArenaProps {
   onClose: () => void;
 }
 
-// ─── Deck helpers ─────────────────────────────────────────────────────────────
-const SUITS: Suit[] = ['♠', '♥', '♦', '♣'];
-const RANKS: Rank[] = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
+type BotLevel = 'rookie' | 'shark' | 'legend';
 
-function buildDeck(): CardData[] {
-  const deck: CardData[] = [];
-  for (const suit of SUITS) for (const rank of RANKS) deck.push({ suit, rank });
-  return deck;
+// ══════════════════════════════════════════════════════════════════════════════
+// BOT AI ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+const RANK_VALUE: Record<Rank, number> = {
+  '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,
+  'J':11,'Q':12,'K':13,'A':14,
+};
+
+// Hand strength categories (higher = better)
+type HandRank =
+  | 'High Card' | 'One Pair' | 'Two Pair' | 'Three of a Kind'
+  | 'Straight' | 'Flush' | 'Full House' | 'Four of a Kind'
+  | 'Straight Flush' | 'Royal Flush';
+
+interface HandEval { rank: HandRank; score: number; description: string; }
+
+function evaluateHand(cards: CardData[]): HandEval {
+  if (cards.length === 0) return { rank: 'High Card', score: 0, description: 'No cards' };
+
+  const rankCounts: Record<string, number> = {};
+  const suitCounts: Record<string, number> = {};
+  const values = cards.map(c => RANK_VALUE[c.rank]).sort((a, b) => b - a);
+
+  cards.forEach(c => {
+    rankCounts[c.rank] = (rankCounts[c.rank] || 0) + 1;
+    suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
+  });
+
+  const counts = Object.values(rankCounts).sort((a, b) => b - a);
+  const isFlush = Object.values(suitCounts).some(v => v >= 5);
+  const sortedVals = [...new Set(values)].sort((a, b) => a - b);
+  const isStraight = sortedVals.length >= 5 &&
+    sortedVals[sortedVals.length - 1] - sortedVals[sortedVals.length - 5] === 4;
+  const isRoyal = isStraight && isFlush && values[0] === 14;
+  const highCard = values[0];
+
+  if (isRoyal) return { rank: 'Royal Flush', score: 900 + highCard, description: 'Royal Flush 👑' };
+  if (isStraight && isFlush) return { rank: 'Straight Flush', score: 800 + highCard, description: 'Straight Flush 🔥' };
+  if (counts[0] === 4) return { rank: 'Four of a Kind', score: 700 + highCard, description: 'Four of a Kind 💥' };
+  if (counts[0] === 3 && counts[1] === 2) return { rank: 'Full House', score: 600 + highCard, description: 'Full House 🏠' };
+  if (isFlush) return { rank: 'Flush', score: 500 + highCard, description: 'Flush ♠' };
+  if (isStraight) return { rank: 'Straight', score: 400 + highCard, description: 'Straight ➡️' };
+  if (counts[0] === 3) return { rank: 'Three of a Kind', score: 300 + highCard, description: 'Three of a Kind 🎯' };
+  if (counts[0] === 2 && counts[1] === 2) return { rank: 'Two Pair', score: 200 + highCard, description: 'Two Pair ✌️' };
+  if (counts[0] === 2) return { rank: 'One Pair', score: 100 + highCard, description: 'One Pair 👥' };
+  return { rank: 'High Card', score: highCard, description: `High Card: ${cards[0]?.rank}` };
 }
 
+// Bot personality configs
+const BOT_CONFIGS: Record<BotLevel, {
+  name: string; emoji: string; avatar: string;
+  thinkMs: [number, number]; // min/max think time
+  bluffChance: number;       // 0-1 chance to bluff
+  foldThreshold: number;     // score below which bot considers folding
+  aggressionBonus: number;   // extra score added to simulate aggression
+  comment: string[];         // bot chat messages
+}> = {
+  rookie: {
+    name: 'Rookie Bot', emoji: '🤖', avatar: '',
+    thinkMs: [800, 1500], bluffChance: 0.05, foldThreshold: 50,
+    aggressionBonus: 0,
+    comment: ['Hmm...', 'Let me think...', 'I got this!', 'Uh oh...'],
+  },
+  shark: {
+    name: 'Shark Bot', emoji: '🦈', avatar: '',
+    thinkMs: [400, 900], bluffChance: 0.2, foldThreshold: 80,
+    aggressionBonus: 30,
+    comment: ['Interesting...', 'I see your move.', 'Bold play.', 'Calculated.'],
+  },
+  legend: {
+    name: 'Legend Bot', emoji: '👑', avatar: '',
+    thinkMs: [200, 600], bluffChance: 0.35, foldThreshold: 120,
+    aggressionBonus: 60,
+    comment: ['Child\'s play.', 'Predictable.', 'I\'ve seen better.', 'Too easy.', 'GG.'],
+  },
+};
+
+function createBot(level: BotLevel, index: number): ArenaPlayer {
+  const cfg = BOT_CONFIGS[level];
+  return {
+    id: `bot_${level}_${index}_${Date.now()}`,
+    name: `${cfg.emoji} ${cfg.name} ${index + 1}`,
+    avatar: '',
+    isBot: true,
+    botLevel: level,
+  };
+}
+
+// Bot decision: returns { action, comment }
+function botDecide(cards: CardData[], level: BotLevel): { action: 'play' | 'fold'; comment: string; handInfo: HandEval } {
+  const cfg = BOT_CONFIGS[level];
+  const hand = evaluateHand(cards);
+  const effectiveScore = hand.score + cfg.aggressionBonus + (Math.random() < cfg.bluffChance ? 200 : 0);
+  const action = effectiveScore >= cfg.foldThreshold ? 'play' : 'fold';
+  const comments = cfg.comment;
+  const comment = comments[Math.floor(Math.random() * comments.length)];
+  return { action, comment, handInfo: hand };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DECK HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+const SUITS: Suit[] = ['♠', '♥', '♦', '♣'];
+const RANKS: Rank[] = ['A','K','Q','J','10','9','8','7','6','5','4','3','2'];
+
+function buildDeck(): CardData[] {
+  const d: CardData[] = [];
+  for (const suit of SUITS) for (const rank of RANKS) d.push({ suit, rank });
+  return d;
+}
 function shuffleDeck(deck: CardData[]): CardData[] {
   const d = [...deck];
   for (let i = d.length - 1; i > 0; i--) {
@@ -41,224 +144,286 @@ function shuffleDeck(deck: CardData[]): CardData[] {
   }
   return d;
 }
-
-function dealCards(deck: CardData[], playerIds: string[]): Record<string, CardData[]> {
-  const hands: Record<string, CardData[]> = {};
-  playerIds.forEach(id => { hands[id] = []; });
-  const perPlayer = Math.floor(deck.length / playerIds.length);
+function dealCards(deck: CardData[], ids: string[]): Record<string, CardData[]> {
+  const h: Record<string, CardData[]> = {};
+  ids.forEach(id => { h[id] = []; });
+  const per = Math.floor(deck.length / ids.length);
   let idx = 0;
-  for (let c = 0; c < perPlayer; c++) {
-    for (const id of playerIds) {
-      hands[id].push(deck[idx++]);
-    }
-  }
-  return hands;
+  for (let c = 0; c < per; c++) for (const id of ids) h[id].push(deck[idx++]);
+  return h;
 }
 
 const ARENA_COLL = 'arena_rooms';
 
-// ─── Player positions around the oval table ───────────────────────────────────
-// Returns CSS position style for each seat index given total players
+// ══════════════════════════════════════════════════════════════════════════════
+// SEAT POSITIONS
+// ══════════════════════════════════════════════════════════════════════════════
 function getSeatStyle(index: number, total: number): React.CSSProperties {
-  // Positions as % of table container: [top%, left%, transform-origin]
-  const positions: Record<number, { top: string; left: string; transform: string }[]> = {
+  const P: Record<number, { top: string; left: string; transform: string }[]> = {
     2: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },   // bottom (you)
-      { top: '8%',  left: '50%', transform: 'translate(-50%,-50%)' },   // top
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
     ],
     3: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '25%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '75%', transform: 'translate(-50%,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'25%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'75%', transform:'translate(-50%,-50%)' },
     ],
     4: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '45%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '45%', left: '97%', transform: 'translate(-100%,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     5: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '30%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '70%', transform: 'translate(-50%,-50%)' },
-      { top: '45%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '45%', left: '97%', transform: 'translate(-100%,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'30%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'70%', transform:'translate(-50%,-50%)' },
+      { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     6: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '22%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '78%', transform: 'translate(-50%,-50%)' },
-      { top: '45%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '45%', left: '97%', transform: 'translate(-100%,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     7: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '22%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '78%', transform: 'translate(-50%,-50%)' },
-      { top: '45%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '45%', left: '97%', transform: 'translate(-100%,-50%)' },
-      { top: '68%', left: '3%',  transform: 'translate(0,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
+      { top:'68%', left:'3%',  transform:'translate(0,-50%)' },
     ],
     8: [
-      { top: '82%', left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '50%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '22%', transform: 'translate(-50%,-50%)' },
-      { top: '8%',  left: '78%', transform: 'translate(-50%,-50%)' },
-      { top: '45%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '45%', left: '97%', transform: 'translate(-100%,-50%)' },
-      { top: '68%', left: '3%',  transform: 'translate(0,-50%)' },
-      { top: '68%', left: '97%', transform: 'translate(-100%,-50%)' },
+      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
+      { top:'68%', left:'3%',  transform:'translate(0,-50%)' },
+      { top:'68%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
   };
-  const list = positions[total] || positions[4];
+  const list = P[Math.min(total, 8)] || P[4];
   return { position: 'absolute', ...list[index] };
 }
 
-// ─── Lobby ────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// LOBBY
+// ══════════════════════════════════════════════════════════════════════════════
 const Lobby: FC<{
   currentUser: User | null;
   globalPlayers: { id: string; name: string; avatar: string }[];
-  onCreateRoom: (count: number) => void;
+  onCreateRoom: (count: number, bots: { count: number; level: BotLevel }) => void;
   onJoinRoom: (id: string) => void;
 }> = ({ currentUser, onCreateRoom, onJoinRoom }) => {
-  const [count, setCount] = useState(2);
+  const [totalSeats, setTotalSeats] = useState(4);
+  const [botCount, setBotCount] = useState(3);
+  const [botLevel, setBotLevel] = useState<BotLevel>('shark');
   const [joinId, setJoinId] = useState('');
   const [tab, setTab] = useState<'create' | 'join'>('create');
 
+  const humanSeats = totalSeats - botCount;
+
   return (
-    <div className="flex flex-col items-center gap-6 py-8 px-4 max-w-sm mx-auto">
-      <div className="text-center">
-        <div className="text-6xl mb-3">🃏</div>
-        <h2 className="text-3xl font-black tracking-widest" style={{ color: '#4ade80' }}>POKER ARENA</h2>
-        <p className="text-gray-400 text-sm mt-1">Real cards. Real players. Online.</p>
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:20, padding:'24px 16px', maxWidth:400, margin:'0 auto' }}>
+      <div style={{ textAlign:'center' }}>
+        <div style={{ fontSize:56, marginBottom:8 }}>🃏</div>
+        <h2 style={{ color:'#4ade80', fontWeight:900, fontSize:26, letterSpacing:3, margin:0 }}>POKER ARENA</h2>
+        <p style={{ color:'#6b7280', fontSize:13, marginTop:4 }}>Play vs AI bots or real players</p>
       </div>
 
-      <div className="flex gap-2 w-full rounded-xl overflow-hidden border border-white/10">
-        {(['create', 'join'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-1 py-2.5 text-sm font-black transition-all"
-            style={{ background: tab === t ? '#16a34a' : 'rgba(0,0,0,0.4)', color: tab === t ? '#fff' : '#6b7280' }}>
-            {t === 'create' ? '🎮 Create Room' : '🔗 Join Room'}
+      {/* Tab */}
+      <div style={{ display:'flex', width:'100%', borderRadius:12, overflow:'hidden', border:'1px solid rgba(255,255,255,0.1)' }}>
+        {(['create','join'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            flex:1, padding:'10px 0', fontWeight:900, fontSize:13, cursor:'pointer', border:'none',
+            background: tab===t ? '#16a34a' : 'rgba(0,0,0,0.5)',
+            color: tab===t ? '#fff' : '#6b7280',
+          }}>
+            {t==='create' ? '🎮 Create Room' : '🔗 Join Room'}
           </button>
         ))}
       </div>
 
       {tab === 'create' && (
-        <div className="w-full flex flex-col gap-4">
-          <p className="text-gray-400 text-xs uppercase tracking-wider text-center">Players at table</p>
-          <div className="grid grid-cols-4 gap-2">
-            {[2,3,4,5,6,7,8].map(n => (
-              <button key={n} onClick={() => setCount(n)}
-                className="py-2.5 rounded-xl font-black text-xl transition-all border-2"
-                style={{
-                  background: count === n ? '#16a34a' : 'rgba(0,0,0,0.4)',
-                  borderColor: count === n ? '#4ade80' : 'rgba(255,255,255,0.1)',
-                  color: count === n ? '#fff' : '#9ca3af',
-                }}>
-                {n}
-              </button>
-            ))}
+        <div style={{ width:'100%', display:'flex', flexDirection:'column', gap:16 }}>
+          {/* Total seats */}
+          <div>
+            <p style={{ color:'#9ca3af', fontSize:11, textTransform:'uppercase', letterSpacing:2, marginBottom:8 }}>Total Seats</p>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8 }}>
+              {[2,3,4,5,6,7,8].map(n => (
+                <button key={n} onClick={() => { setTotalSeats(n); setBotCount(Math.min(botCount, n-1)); }}
+                  style={{
+                    padding:'10px 0', borderRadius:10, fontWeight:900, fontSize:18, cursor:'pointer',
+                    background: totalSeats===n ? '#16a34a' : 'rgba(0,0,0,0.4)',
+                    border: `2px solid ${totalSeats===n ? '#4ade80' : 'rgba(255,255,255,0.1)'}`,
+                    color: totalSeats===n ? '#fff' : '#9ca3af',
+                  }}>
+                  {n}
+                </button>
+              ))}
+            </div>
           </div>
-          <p className="text-gray-500 text-xs text-center">{Math.floor(52 / count)} cards per player</p>
-          <button onClick={() => onCreateRoom(count)}
-            className="w-full py-3.5 rounded-xl font-black text-white text-lg transition-all"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 20px rgba(22,163,74,0.4)' }}>
-            CREATE ROOM
+
+          {/* Bot count */}
+          <div>
+            <p style={{ color:'#9ca3af', fontSize:11, textTransform:'uppercase', letterSpacing:2, marginBottom:8 }}>
+              🤖 Bot Players: <span style={{ color:'#4ade80' }}>{botCount}</span>
+              <span style={{ color:'#6b7280', marginLeft:8 }}>({humanSeats} human seat{humanSeats!==1?'s':''})</span>
+            </p>
+            <input type="range" min={0} max={totalSeats-1} value={botCount}
+              onChange={e => setBotCount(Number(e.target.value))}
+              style={{ width:'100%', accentColor:'#4ade80' }} />
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'#6b7280', marginTop:2 }}>
+              <span>0 bots</span><span>{totalSeats-1} bots</span>
+            </div>
+          </div>
+
+          {/* Bot difficulty */}
+          {botCount > 0 && (
+            <div>
+              <p style={{ color:'#9ca3af', fontSize:11, textTransform:'uppercase', letterSpacing:2, marginBottom:8 }}>Bot Difficulty</p>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
+                {([
+                  { level:'rookie' as BotLevel, label:'🤖 Rookie', desc:'Easy', color:'#22c55e' },
+                  { level:'shark'  as BotLevel, label:'🦈 Shark',  desc:'Hard', color:'#3b82f6' },
+                  { level:'legend' as BotLevel, label:'👑 Legend', desc:'Expert', color:'#f59e0b' },
+                ]).map(({ level, label, desc, color }) => (
+                  <button key={level} onClick={() => setBotLevel(level)} style={{
+                    padding:'10px 6px', borderRadius:10, cursor:'pointer', border:`2px solid ${botLevel===level ? color : 'rgba(255,255,255,0.1)'}`,
+                    background: botLevel===level ? `${color}22` : 'rgba(0,0,0,0.4)',
+                    display:'flex', flexDirection:'column', alignItems:'center', gap:2,
+                  }}>
+                    <span style={{ fontSize:13, fontWeight:900, color: botLevel===level ? color : '#9ca3af' }}>{label}</span>
+                    <span style={{ fontSize:10, color:'#6b7280' }}>{desc}</span>
+                  </button>
+                ))}
+              </div>
+              {botLevel === 'legend' && (
+                <p style={{ color:'#f59e0b', fontSize:11, marginTop:6, textAlign:'center' }}>
+                  ⚠️ Legend bots have 35% bluff rate and expert hand reading. Good luck!
+                </p>
+              )}
+            </div>
+          )}
+
+          <p style={{ color:'#6b7280', fontSize:11, textAlign:'center' }}>
+            {Math.floor(52 / totalSeats)} cards per player
+          </p>
+
+          <button onClick={() => onCreateRoom(totalSeats, { count: botCount, level: botLevel })}
+            style={{
+              width:'100%', padding:'14px 0', borderRadius:12, fontWeight:900, fontSize:16,
+              background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', cursor:'pointer',
+              boxShadow:'0 4px 20px rgba(22,163,74,0.4)',
+            }}>
+            {botCount > 0 ? `🎮 PLAY vs ${botCount} BOT${botCount>1?'S':''}` : '🎮 CREATE ROOM'}
           </button>
         </div>
       )}
 
       {tab === 'join' && (
-        <div className="w-full flex flex-col gap-4">
+        <div style={{ width:'100%', display:'flex', flexDirection:'column', gap:12 }}>
           <input value={joinId} onChange={e => setJoinId(e.target.value.toUpperCase())}
             placeholder="ROOM CODE"
-            className="w-full rounded-xl px-4 py-3 text-white text-center text-2xl tracking-widest font-mono focus:outline-none"
-            style={{ background: 'rgba(0,0,0,0.5)', border: '2px solid rgba(74,222,128,0.3)' }}
+            style={{
+              width:'100%', padding:'12px 16px', borderRadius:12, fontSize:22,
+              textAlign:'center', letterSpacing:4, fontFamily:'monospace',
+              background:'rgba(0,0,0,0.5)', border:'2px solid rgba(74,222,128,0.3)',
+              color:'#fff', outline:'none', boxSizing:'border-box',
+            }}
             maxLength={8} />
           <button onClick={() => joinId.trim() && onJoinRoom(joinId.trim())}
             disabled={!joinId.trim()}
-            className="w-full py-3.5 rounded-xl font-black text-white text-lg transition-all disabled:opacity-40"
-            style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)', boxShadow: '0 4px 20px rgba(124,58,237,0.4)' }}>
+            style={{
+              width:'100%', padding:'14px 0', borderRadius:12, fontWeight:900, fontSize:16,
+              background:'linear-gradient(135deg,#7c3aed,#6d28d9)', color:'#fff', border:'none',
+              cursor: joinId.trim() ? 'pointer' : 'not-allowed', opacity: joinId.trim() ? 1 : 0.4,
+            }}>
             JOIN ROOM
           </button>
         </div>
       )}
 
       {!currentUser && (
-        <p className="text-yellow-400 text-xs text-center bg-yellow-400/10 border border-yellow-400/20 rounded-lg px-4 py-2">
-          ⚠️ Sign in to play online. Local mode available.
+        <p style={{ color:'#fbbf24', fontSize:11, textAlign:'center', background:'rgba(251,191,36,0.1)', border:'1px solid rgba(251,191,36,0.2)', borderRadius:8, padding:'8px 14px' }}>
+          ⚠️ Sign in to play online. Bots work offline too.
         </p>
       )}
     </div>
   );
 };
 
-// ─── Waiting Room ─────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// WAITING ROOM
+// ══════════════════════════════════════════════════════════════════════════════
 const WaitingRoom: FC<{
-  room: ArenaRoom;
-  currentUser: User | null;
-  onJoinAsPlayer: () => void;
-  onStartDeal: () => void;
-  onLeave: () => void;
+  room: ArenaRoom; currentUser: User | null;
+  onJoinAsPlayer: () => void; onStartDeal: () => void; onLeave: () => void;
 }> = ({ room, currentUser, onJoinAsPlayer, onStartDeal, onLeave }) => {
   const isHost = currentUser?.uid === room.hostId;
   const amIn = room.players.some(p => p.id === (currentUser?.uid || ''));
+  const bots = room.players.filter(p => p.isBot);
+  const humans = room.players.filter(p => !p.isBot);
 
   return (
-    <div className="flex flex-col gap-5 py-6 px-4 max-w-md mx-auto">
-      <div className="text-center">
-        <p className="text-gray-400 text-xs uppercase tracking-widest mb-2">Room Code</p>
-        <div className="text-4xl font-black font-mono tracking-widest py-3 px-8 rounded-2xl inline-block"
-          style={{ background: 'rgba(22,163,74,0.15)', border: '2px solid rgba(74,222,128,0.4)', color: '#4ade80' }}>
+    <div style={{ display:'flex', flexDirection:'column', gap:16, padding:'20px 16px', maxWidth:420, margin:'0 auto' }}>
+      <div style={{ textAlign:'center' }}>
+        <p style={{ color:'#9ca3af', fontSize:11, textTransform:'uppercase', letterSpacing:3, marginBottom:6 }}>Room Code</p>
+        <div style={{ fontSize:36, fontWeight:900, fontFamily:'monospace', letterSpacing:6, padding:'10px 24px', borderRadius:14, display:'inline-block', background:'rgba(22,163,74,0.15)', border:'2px solid rgba(74,222,128,0.4)', color:'#4ade80' }}>
           {room.roomId}
         </div>
-        <p className="text-gray-500 text-xs mt-2">Share this code with friends</p>
+        <p style={{ color:'#6b7280', fontSize:11, marginTop:6 }}>Share with friends to join</p>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <p className="text-gray-400 text-xs uppercase tracking-wider">Players ({room.players.length}/8)</p>
-        {room.players.map((p, i) => (
-          <div key={p.id} className="flex items-center gap-3 rounded-xl px-4 py-3"
-            style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 flex items-center justify-center font-black text-sm"
-              style={{ background: 'linear-gradient(135deg,#16a34a,#7c3aed)' }}>
-              {p.avatar ? <img src={p.avatar} className="w-full h-full object-cover" alt="" /> : p.name[0]?.toUpperCase()}
+      <div>
+        <p style={{ color:'#9ca3af', fontSize:11, textTransform:'uppercase', letterSpacing:2, marginBottom:8 }}>
+          Players ({room.players.length})
+        </p>
+        <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+          {humans.map((p, i) => (
+            <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:12, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ width:36, height:36, borderRadius:'50%', overflow:'hidden', background:'linear-gradient(135deg,#16a34a,#7c3aed)', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:14, color:'#fff', flexShrink:0 }}>
+                {p.avatar ? <img src={p.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" /> : p.name[0]?.toUpperCase()}
+              </div>
+              <span style={{ color:'#fff', fontWeight:700, flex:1 }}>{p.name}</span>
+              {i === 0 && <span style={{ color:'#fbbf24', fontSize:11 }}>👑 Host</span>}
+              {p.id === currentUser?.uid && <span style={{ color:'#4ade80', fontSize:11, fontWeight:900 }}>YOU</span>}
             </div>
-            <span className="text-white font-bold flex-1">{p.name}</span>
-            {i === 0 && <span className="text-yellow-400 text-xs">👑 Host</span>}
-            {p.id === currentUser?.uid && <span className="text-green-400 text-xs font-bold">YOU</span>}
-          </div>
-        ))}
-        {room.players.length < 2 && (
-          <div className="text-center text-gray-600 text-sm py-4 rounded-xl border border-dashed border-white/10">
-            Waiting for more players...
-          </div>
-        )}
+          ))}
+          {bots.map(p => (
+            <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:12, background:'rgba(59,130,246,0.08)', border:'1px solid rgba(59,130,246,0.2)' }}>
+              <div style={{ width:36, height:36, borderRadius:'50%', background:'linear-gradient(135deg,#1d4ed8,#7c3aed)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>
+                {BOT_CONFIGS[p.botLevel || 'rookie'].emoji}
+              </div>
+              <span style={{ color:'#93c5fd', fontWeight:700, flex:1 }}>{p.name}</span>
+              <span style={{ color:'#6b7280', fontSize:10, background:'rgba(59,130,246,0.15)', padding:'2px 8px', borderRadius:6 }}>
+                {p.botLevel?.toUpperCase()} BOT
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="flex flex-col gap-2 mt-2">
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
         {!amIn && (
-          <button onClick={onJoinAsPlayer}
-            className="w-full py-3 rounded-xl font-black text-white"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)' }}>
+          <button onClick={onJoinAsPlayer} style={{ padding:'12px 0', borderRadius:12, fontWeight:900, fontSize:14, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', cursor:'pointer' }}>
             JOIN AS PLAYER
           </button>
         )}
-        {isHost && room.players.length >= 2 && (
-          <button onClick={onStartDeal}
-            className="w-full py-3.5 rounded-xl font-black text-white text-lg"
-            style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 24px rgba(22,163,74,0.5)' }}>
+        {isHost && (
+          <button onClick={onStartDeal} style={{ padding:'14px 0', borderRadius:12, fontWeight:900, fontSize:16, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', cursor:'pointer', boxShadow:'0 4px 20px rgba(22,163,74,0.5)' }}>
             🃏 SHUFFLE & DEAL
           </button>
         )}
-        {isHost && room.players.length < 2 && (
-          <p className="text-center text-gray-500 text-xs">Need at least 2 players</p>
-        )}
-        <button onClick={onLeave}
-          className="w-full py-2.5 rounded-xl text-gray-400 text-sm"
-          style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <button onClick={onLeave} style={{ padding:'10px 0', borderRadius:12, fontWeight:700, fontSize:13, background:'rgba(0,0,0,0.3)', color:'#9ca3af', border:'1px solid rgba(255,255,255,0.08)', cursor:'pointer' }}>
           Leave Room
         </button>
       </div>
@@ -266,93 +431,88 @@ const WaitingRoom: FC<{
   );
 };
 
-// ─── Deck pile in center (52 stacked cards) ───────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// DECK PILE
+// ══════════════════════════════════════════════════════════════════════════════
 const DeckPile: FC<{ count: number; isShuffling: boolean }> = ({ count, isShuffling }) => (
-  <div className="relative flex items-center justify-center" style={{ width: 72, height: 100 }}>
-    {/* Stack of cards */}
-    {Array.from({ length: Math.min(count, 12) }).map((_, i) => (
+  <div style={{ position:'relative', width:64, height:90, display:'flex', alignItems:'center', justifyContent:'center' }}>
+    {Array.from({ length: Math.min(count, 10) }).map((_, i) => (
       <div key={i} style={{
-        position: 'absolute',
-        top: -i * 0.8,
-        left: i * 0.3,
-        zIndex: i,
-        animation: isShuffling ? `deckShuffle 0.3s ${i * 0.04}s ease-in-out infinite alternate` : undefined,
+        position:'absolute', top: -i*0.7, left: i*0.3, zIndex: i,
+        animation: isShuffling ? `deckShuffle 0.25s ${i*0.03}s ease-in-out infinite alternate` : undefined,
       }}>
         <PlayingCard faceDown small />
       </div>
     ))}
     {count > 0 && (
-      <div style={{ position: 'absolute', bottom: -18, zIndex: 20 }}>
-        <span style={{ fontSize: 10, color: '#4ade80', fontWeight: 900 }}>{count} cards</span>
+      <div style={{ position:'absolute', bottom:-18, zIndex:20, color:'#4ade80', fontWeight:900, fontSize:10 }}>
+        {count} left
       </div>
     )}
   </div>
 );
 
-// ─── Single player seat on the table ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// PLAYER SEAT
+// ══════════════════════════════════════════════════════════════════════════════
 const PlayerSeat: FC<{
-  player: { id: string; name: string; avatar: string };
-  cards: CardData[];
-  isMe: boolean;
-  isDealing: boolean;
-  dealingCardIndex: number; // which card is currently flying to this seat
-  revealed: boolean;
-  onReveal: () => void;
-  cardCount: number; // total cards this player should have
-  visibleCardCount: number; // how many have been dealt so far
-}> = ({ player, cards, isMe, revealed, onReveal, visibleCardCount }) => {
+  player: ArenaPlayer; cards: CardData[];
+  isMe: boolean; revealed: boolean;
+  onReveal: () => void; visibleCount: number;
+  botDecision?: { action: string; comment: string; handInfo: HandEval } | null;
+  isThinking?: boolean;
+}> = ({ player, cards, isMe, revealed, onReveal, visibleCount, botDecision, isThinking }) => {
   const [showCards, setShowCards] = useState(false);
+  const dealtCards = cards.slice(0, visibleCount);
+  const isBot = player.isBot;
+  const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
 
-  useEffect(() => {
-    if (revealed && isMe) setShowCards(true);
-  }, [revealed, isMe]);
-
-  const handleReveal = () => {
-    setShowCards(true);
-    onReveal();
-  };
-
-  // Only show as many cards as have been dealt
-  const dealtCards = cards.slice(0, visibleCardCount);
+  useEffect(() => { if (revealed && isMe) setShowCards(true); }, [revealed, isMe]);
+  // Bots auto-reveal after dealing
+  useEffect(() => { if (isBot && dealtCards.length > 0) setShowCards(false); }, [isBot, dealtCards.length]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 90 }}>
-      {/* Avatar + name */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, minWidth:80 }}>
+      {/* Avatar */}
+      <div style={{ position:'relative' }}>
         <div style={{
-          width: isMe ? 52 : 44,
-          height: isMe ? 52 : 44,
-          borderRadius: '50%',
-          overflow: 'hidden',
-          border: isMe ? '3px solid #4ade80' : '2px solid rgba(255,255,255,0.3)',
-          boxShadow: isMe ? '0 0 16px rgba(74,222,128,0.6)' : '0 2px 8px rgba(0,0,0,0.5)',
-          background: 'linear-gradient(135deg,#16a34a,#7c3aed)',
-          flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 900, fontSize: 16, color: '#fff',
+          width: isMe ? 50 : 42, height: isMe ? 50 : 42, borderRadius:'50%', overflow:'hidden',
+          border: isMe ? '3px solid #4ade80' : isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.25)',
+          boxShadow: isMe ? '0 0 16px rgba(74,222,128,0.6)' : isBot ? `0 0 12px ${levelColor}44` : '0 2px 8px rgba(0,0,0,0.5)',
+          background: isBot ? `linear-gradient(135deg,#1d4ed8,#7c3aed)` : 'linear-gradient(135deg,#16a34a,#7c3aed)',
+          display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:isBot?20:15, color:'#fff',
         }}>
-          {player.avatar
-            ? <img src={player.avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-            : player.name[0]?.toUpperCase()}
+          {!isBot && player.avatar
+            ? <img src={player.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
+            : isBot ? BOT_CONFIGS[player.botLevel||'rookie'].emoji
+            : player.name[0]?.toUpperCase()
+          }
         </div>
-        <div style={{
-          background: 'rgba(0,0,0,0.75)',
-          borderRadius: 8,
-          padding: '2px 8px',
-          textAlign: 'center',
-        }}>
-          <p style={{ color: isMe ? '#4ade80' : '#fff', fontWeight: 900, fontSize: 11, whiteSpace: 'nowrap' }}>
-            {isMe ? 'YOU' : player.name}
+        {isThinking && (
+          <div style={{ position:'absolute', top:-6, right:-6, background:'#1d4ed8', borderRadius:'50%', width:18, height:18, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, animation:'pulse 0.6s infinite' }}>
+            💭
+          </div>
+        )}
+      </div>
+
+      {/* Name tag */}
+      <div style={{ background:'rgba(0,0,0,0.8)', borderRadius:7, padding:'2px 7px', textAlign:'center', maxWidth:100 }}>
+        <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight:900, fontSize:10, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:90 }}>
+          {isMe ? 'YOU' : player.name}
+        </p>
+        {isBot && botDecision && !isThinking && (
+          <p style={{ color:'#6b7280', fontSize:9, fontStyle:'italic', maxWidth:90, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            "{botDecision.comment}"
           </p>
-        </div>
+        )}
       </div>
 
       {/* Cards */}
       {dealtCards.length > 0 && (
-        <div style={{ display: 'flex', gap: isMe ? 4 : -8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: isMe ? 300 : 80 }}>
+        <div style={{ display:'flex', gap: isMe ? 3 : -10, flexWrap:'wrap', justifyContent:'center', maxWidth: isMe ? 320 : 72 }}>
           {dealtCards.map((card, i) => (
-            <div key={i} style={{ animation: `dealIn 0.4s ease-out ${i * 0.06}s both` }}>
-              {isMe && showCards
+            <div key={i} style={{ animation:`dealIn 0.35s ease-out ${i*0.05}s both` }}>
+              {(isMe && showCards)
                 ? <PlayingCard card={card} small={dealtCards.length > 10} />
                 : <PlayingCard faceDown small />
               }
@@ -361,188 +521,168 @@ const PlayerSeat: FC<{
         </div>
       )}
 
-      {/* See Cards button for me */}
+      {/* Bot hand info after reveal */}
+      {isBot && botDecision && dealtCards.length > 0 && (
+        <div style={{ background:'rgba(0,0,0,0.7)', borderRadius:6, padding:'2px 8px', border:`1px solid ${levelColor}44` }}>
+          <span style={{ color: levelColor, fontSize:9, fontWeight:900 }}>{botDecision.handInfo.description}</span>
+        </div>
+      )}
+
+      {/* See cards button for human */}
       {isMe && dealtCards.length > 0 && !showCards && (
-        <button onClick={handleReveal}
-          style={{
-            marginTop: 4,
-            padding: '5px 14px',
-            borderRadius: 8,
-            background: 'linear-gradient(135deg,#16a34a,#15803d)',
-            color: '#fff',
-            fontWeight: 900,
-            fontSize: 11,
-            border: 'none',
-            cursor: 'pointer',
-            boxShadow: '0 2px 10px rgba(22,163,74,0.5)',
-          }}>
-          👁 SEE MY CARDS
+        <button onClick={() => { setShowCards(true); onReveal(); }}
+          style={{ marginTop:2, padding:'4px 12px', borderRadius:7, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', fontWeight:900, fontSize:10, border:'none', cursor:'pointer', boxShadow:'0 2px 8px rgba(22,163,74,0.5)' }}>
+          👁 SEE CARDS
         </button>
       )}
       {isMe && showCards && dealtCards.length > 0 && (
-        <span style={{ fontSize: 10, color: '#4ade80', fontWeight: 700 }}>✓ Revealed</span>
+        <span style={{ fontSize:9, color:'#4ade80', fontWeight:700 }}>✓ Revealed</span>
       )}
     </div>
   );
 };
 
-// ─── Poker Table ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// POKER TABLE
+// ══════════════════════════════════════════════════════════════════════════════
 const PokerTable: FC<{
-  room: ArenaRoom;
-  myId: string;
-  onReveal: () => void;
-  onNewGame: () => void;
-  onLeave: () => void;
+  room: ArenaRoom; myId: string;
+  onReveal: () => void; onNewGame: () => void; onLeave: () => void;
 }> = ({ room, myId, onReveal, onNewGame, onLeave }) => {
   const isHost = myId === room.hostId;
   const perPlayer = Math.floor(52 / room.players.length);
 
-  // Reorder players so "me" is always index 0 (bottom seat)
+  // Put "me" at seat 0
   const myIndex = room.players.findIndex(p => p.id === myId);
-  const orderedPlayers = myIndex >= 0
+  const ordered = myIndex >= 0
     ? [...room.players.slice(myIndex), ...room.players.slice(0, myIndex)]
     : room.players;
 
-  // Dealing animation state: how many cards each player has received so far
+  // Dealing animation
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
-  const [deckRemaining, setDeckRemaining] = useState(52);
+  const [deckLeft, setDeckLeft] = useState(52);
   const [isShuffling, setIsShuffling] = useState(false);
-  const [shuffleDone, setShuffleDone] = useState(false);
-  const dealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [dealDone, setDealDone] = useState(false);
+  const dealRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Bot state
+  const [botDecisions, setBotDecisions] = useState<Record<string, { action: string; comment: string; handInfo: HandEval } | null>>({});
+  const [thinkingBots, setThinkingBots] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (room.status === 'shuffling') {
-      setIsShuffling(true);
-      setShuffleDone(false);
-      setVisibleCounts({});
-      setDeckRemaining(52);
-    } else if (room.status === 'reveal' || room.status === 'done') {
-      setIsShuffling(false);
-      if (!shuffleDone) {
-        // Start sequential dealing animation
-        setShuffleDone(true);
-        const players = room.players;
-        const total = perPlayer * players.length;
-        let cardIdx = 0;
+      setIsShuffling(true); setDealDone(false);
+      setVisibleCounts({}); setDeckLeft(52);
+      setBotDecisions({}); setThinkingBots(new Set());
+    } else if ((room.status === 'reveal' || room.status === 'done') && !dealDone) {
+      setIsShuffling(false); setDealDone(true);
+      const players = room.players;
+      const total = perPlayer * players.length;
+      let cardIdx = 0;
 
-        const dealNext = () => {
-          if (cardIdx >= total) {
-            setDeckRemaining(52 - total);
-            return;
-          }
-          const playerIdx = cardIdx % players.length;
-          const pid = players[playerIdx].id;
-          setVisibleCounts(prev => ({ ...prev, [pid]: (prev[pid] || 0) + 1 }));
-          setDeckRemaining(prev => Math.max(0, prev - 1));
-          cardIdx++;
-          dealTimerRef.current = setTimeout(dealNext, 120);
-        };
-
-        // Short pause after shuffle before dealing
-        dealTimerRef.current = setTimeout(dealNext, 600);
-      }
+      const dealNext = () => {
+        if (cardIdx >= total) {
+          setDeckLeft(52 - total);
+          // Trigger bot thinking after all cards dealt
+          triggerBotThinking();
+          return;
+        }
+        const pid = players[cardIdx % players.length].id;
+        setVisibleCounts(prev => ({ ...prev, [pid]: (prev[pid] || 0) + 1 }));
+        setDeckLeft(prev => Math.max(0, prev - 1));
+        cardIdx++;
+        dealRef.current = setTimeout(dealNext, 110);
+      };
+      dealRef.current = setTimeout(dealNext, 500);
     }
-    return () => { if (dealTimerRef.current) clearTimeout(dealTimerRef.current); };
+    return () => { if (dealRef.current) clearTimeout(dealRef.current); };
   }, [room.status]);
 
-  const allDealt = orderedPlayers.every(p => (visibleCounts[p.id] || 0) >= perPlayer);
+  const triggerBotThinking = () => {
+    const bots = room.players.filter(p => p.isBot);
+    bots.forEach((bot, i) => {
+      const cfg = BOT_CONFIGS[bot.botLevel || 'rookie'];
+      const [minT, maxT] = cfg.thinkMs;
+      const thinkTime = minT + Math.random() * (maxT - minT) + i * 300;
+
+      setThinkingBots(prev => new Set([...prev, bot.id]));
+
+      setTimeout(() => {
+        const cards = room.hands[bot.id] || [];
+        const decision = botDecide(cards, bot.botLevel || 'rookie');
+        setBotDecisions(prev => ({ ...prev, [bot.id]: decision }));
+        setThinkingBots(prev => { const s = new Set(prev); s.delete(bot.id); return s; });
+      }, thinkTime);
+    });
+  };
+
+  const allDealt = ordered.every(p => (visibleCounts[p.id] || 0) >= perPlayer);
+
+  // Find winner among bots (highest hand score)
+  const botWinner = allDealt && Object.keys(botDecisions).length > 0
+    ? room.players
+        .filter(p => p.isBot && botDecisions[p.id]?.action === 'play')
+        .sort((a, b) => (botDecisions[b.id]?.handInfo.score || 0) - (botDecisions[a.id]?.handInfo.score || 0))[0]
+    : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {/* Table area */}
-      <div style={{ flex: 1, position: 'relative', padding: '12px 8px 0' }}>
-        {/* Outer wood border */}
-        <div style={{
-          position: 'absolute', inset: 8,
-          borderRadius: '50%',
-          background: 'linear-gradient(145deg, #8B5E3C, #5C3A1E, #8B5E3C)',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.8), inset 0 2px 4px rgba(255,255,255,0.1)',
-        }} />
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
+      {/* Table */}
+      <div style={{ flex:1, position:'relative', padding:'10px 6px 0', minHeight:300 }}>
+        {/* Wood border */}
+        <div style={{ position:'absolute', inset:6, borderRadius:'50%', background:'linear-gradient(145deg,#8B5E3C,#5C3A1E,#8B5E3C)', boxShadow:'0 8px 40px rgba(0,0,0,0.8)' }} />
         {/* Green felt */}
-        <div style={{
-          position: 'absolute', inset: 28,
-          borderRadius: '50%',
-          background: 'radial-gradient(ellipse at center, #1a6b2e 0%, #145a25 50%, #0f4a1e 100%)',
-          boxShadow: 'inset 0 4px 30px rgba(0,0,0,0.4)',
-        }}>
-          {/* Felt pattern overlay */}
-          <div style={{
-            position: 'absolute', inset: 0, borderRadius: '50%', opacity: 0.06,
-            backgroundImage: 'repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)',
-            backgroundSize: '8px 8px',
-          }} />
+        <div style={{ position:'absolute', inset:24, borderRadius:'50%', background:'radial-gradient(ellipse at center,#1a6b2e 0%,#145a25 50%,#0f4a1e 100%)', boxShadow:'inset 0 4px 30px rgba(0,0,0,0.4)' }}>
+          <div style={{ position:'absolute', inset:0, borderRadius:'50%', opacity:0.05, backgroundImage:'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize:'8px 8px' }} />
         </div>
 
-        {/* Center deck pile */}
-        <div style={{
-          position: 'absolute', top: '50%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          zIndex: 10,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-        }}>
-          <DeckPile count={deckRemaining} isShuffling={isShuffling} />
+        {/* Center deck */}
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
+          <DeckPile count={deckLeft} isShuffling={isShuffling} />
           {isShuffling && (
-            <div style={{
-              background: 'rgba(0,0,0,0.8)', borderRadius: 10, padding: '4px 12px',
-              color: '#4ade80', fontWeight: 900, fontSize: 12, letterSpacing: 2,
-              animation: 'pulse 0.8s infinite',
-            }}>
+            <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#4ade80', fontWeight:900, fontSize:11, letterSpacing:2, animation:'pulse 0.8s infinite' }}>
               🔀 SHUFFLING...
+            </div>
+          )}
+          {botWinner && allDealt && (
+            <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'4px 10px', color:'#f59e0b', fontWeight:900, fontSize:10, textAlign:'center', marginTop:4 }}>
+              🏆 {botWinner.name} wins!
             </div>
           )}
         </div>
 
-        {/* Players around the table */}
-        <div style={{ position: 'absolute', inset: 0 }}>
-          {orderedPlayers.map((player, seatIdx) => (
-            <div key={player.id} style={{ ...getSeatStyle(seatIdx, orderedPlayers.length), zIndex: 20 }}>
+        {/* Seats */}
+        <div style={{ position:'absolute', inset:0 }}>
+          {ordered.map((player, seatIdx) => (
+            <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length), zIndex:20 }}>
               <PlayerSeat
                 player={player}
                 cards={room.hands[player.id] || []}
                 isMe={player.id === myId}
-                isDealing={room.status === 'reveal'}
-                dealingCardIndex={0}
                 revealed={room.revealedBy.includes(player.id)}
                 onReveal={onReveal}
-                cardCount={perPlayer}
-                visibleCardCount={visibleCounts[player.id] || 0}
+                visibleCount={visibleCounts[player.id] || 0}
+                botDecision={player.isBot ? (botDecisions[player.id] || null) : null}
+                isThinking={player.isBot ? thinkingBots.has(player.id) : false}
               />
             </div>
           ))}
         </div>
       </div>
 
-      {/* Bottom action bar */}
-      <div style={{
-        padding: '10px 16px 14px',
-        display: 'flex', gap: 8, alignItems: 'center',
-        background: 'rgba(0,0,0,0.6)',
-        borderTop: '1px solid rgba(255,255,255,0.06)',
-        flexShrink: 0,
-      }}>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700 }}>
-            Room: <span style={{ fontFamily: 'monospace', letterSpacing: 2 }}>{room.roomId}</span>
-          </span>
-          <span style={{ color: '#6b7280', fontSize: 10 }}>• {room.players.length} players</span>
-          {allDealt && <span style={{ color: '#4ade80', fontSize: 10, fontWeight: 700 }}>✓ All dealt</span>}
+      {/* Action bar */}
+      <div style={{ padding:'8px 14px 12px', display:'flex', gap:8, alignItems:'center', background:'rgba(0,0,0,0.65)', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        <div style={{ flex:1, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+          <span style={{ color:'#4ade80', fontSize:11, fontWeight:700, fontFamily:'monospace', letterSpacing:2 }}>{room.roomId}</span>
+          <span style={{ color:'#6b7280', fontSize:10 }}>• {room.players.filter(p=>!p.isBot).length} human{room.players.filter(p=>p.isBot).length>0?` + ${room.players.filter(p=>p.isBot).length} bot`:''}</span>
+          {allDealt && <span style={{ color:'#4ade80', fontSize:10, fontWeight:700 }}>✓ Dealt</span>}
         </div>
         {isHost && allDealt && (
-          <button onClick={onNewGame}
-            style={{
-              padding: '7px 16px', borderRadius: 10, fontWeight: 900, fontSize: 12,
-              background: 'linear-gradient(135deg,#16a34a,#15803d)',
-              color: '#fff', border: 'none', cursor: 'pointer',
-            }}>
+          <button onClick={onNewGame} style={{ padding:'6px 14px', borderRadius:9, fontWeight:900, fontSize:12, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', cursor:'pointer' }}>
             🔀 New Deal
           </button>
         )}
-        <button onClick={onLeave}
-          style={{
-            padding: '7px 14px', borderRadius: 10, fontWeight: 700, fontSize: 12,
-            background: 'rgba(239,68,68,0.15)', color: '#f87171',
-            border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer',
-          }}>
+        <button onClick={onLeave} style={{ padding:'6px 12px', borderRadius:9, fontWeight:700, fontSize:12, background:'rgba(239,68,68,0.15)', color:'#f87171', border:'1px solid rgba(239,68,68,0.3)', cursor:'pointer' }}>
           Leave
         </button>
       </div>
@@ -550,7 +690,9 @@ const PokerTable: FC<{
   );
 };
 
-// ─── Main PokerArena ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════════════════════
 export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, onClose }) => {
   const [screen, setScreen] = useState<'lobby' | 'room'>('lobby');
   const [room, setRoom] = useState<ArenaRoom | null>(null);
@@ -559,11 +701,9 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
 
   const myProfile = useMemo(() => currentUser
     ? globalPlayers.find(p => p.id === currentUser.uid) || {
-        id: currentUser.uid,
-        name: currentUser.displayName || 'Player',
-        avatar: currentUser.photoURL || '',
+        id: currentUser.uid, name: currentUser.displayName || 'Player', avatar: currentUser.photoURL || '',
       }
-    : { id: `guest_${Math.random().toString(36).slice(2, 8)}`, name: 'Guest', avatar: '' },
+    : { id: `guest_${Math.random().toString(36).slice(2,8)}`, name: 'Guest', avatar: '' },
   [currentUser, globalPlayers]);
 
   const subscribeToRoom = (roomId: string) => {
@@ -577,12 +717,15 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
 
   useEffect(() => () => { if (unsubRef.current) unsubRef.current(); }, []);
 
-  const handleCreateRoom = async (_count: number) => {
+  const handleCreateRoom = async (_totalSeats: number, bots: { count: number; level: BotLevel }) => {
     setError('');
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const humanPlayer: ArenaPlayer = { id: myProfile.id, name: myProfile.name, avatar: myProfile.avatar };
+    const botPlayers: ArenaPlayer[] = Array.from({ length: bots.count }, (_, i) => createBot(bots.level, i));
+    const allPlayers = [humanPlayer, ...botPlayers];
+
     const newRoom: ArenaRoom = {
-      roomId, hostId: myProfile.id,
-      players: [{ id: myProfile.id, name: myProfile.name, avatar: myProfile.avatar }],
+      roomId, hostId: myProfile.id, players: allPlayers,
       status: 'waiting', deck: [], hands: {}, revealedBy: [], dealStep: 0, createdAt: Date.now(),
     };
     try {
@@ -619,22 +762,21 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
     }
   };
 
-  const handleStartDeal = async () => {
-    if (!room) return;
+  const startDeal = async (r: ArenaRoom) => {
     const shuffled = shuffleDeck(buildDeck());
-    const hands = dealCards(shuffled, room.players.map(p => p.id));
-    const ref = doc(db, ARENA_COLL, room.roomId);
+    const hands = dealCards(shuffled, r.players.map(p => p.id));
     const update = { status: 'shuffling' as const, deck: shuffled, hands, revealedBy: [], dealStep: 0 };
+    const ref = doc(db, ARENA_COLL, r.roomId);
     try {
       await updateDoc(ref, update);
-      // After shuffle animation, switch to reveal
-      setTimeout(async () => {
-        try { await updateDoc(ref, { status: 'reveal' }); } catch { /* ignore */ }
-      }, 1800);
+      setTimeout(async () => { try { await updateDoc(ref, { status: 'reveal' }); } catch { /* ignore */ } }, 1800);
     } catch {
       setRoom(prev => prev ? { ...prev, ...update, status: 'reveal' } : prev);
     }
   };
+
+  const handleStartDeal = () => { if (room) startDeal(room); };
+  const handleNewGame = () => { if (room) startDeal(room); };
 
   const handleReveal = async () => {
     if (!room || room.revealedBy.includes(myProfile.id)) return;
@@ -644,61 +786,27 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
     catch { setRoom(prev => prev ? { ...prev, revealedBy: newRevealed } : prev); }
   };
 
-  const handleNewGame = async () => {
-    if (!room) return;
-    const shuffled = shuffleDeck(buildDeck());
-    const hands = dealCards(shuffled, room.players.map(p => p.id));
-    const ref = doc(db, ARENA_COLL, room.roomId);
-    const update = { status: 'shuffling' as const, deck: shuffled, hands, revealedBy: [], dealStep: 0 };
-    try {
-      await updateDoc(ref, update);
-      setTimeout(async () => {
-        try { await updateDoc(ref, { status: 'reveal' }); } catch { /* ignore */ }
-      }, 1800);
-    } catch {
-      setRoom(prev => prev ? { ...prev, ...update, status: 'reveal' } : prev);
-    }
-  };
-
-  const handleLeave = () => {
-    if (unsubRef.current) unsubRef.current();
-    setRoom(null); setScreen('lobby');
-  };
+  const handleLeave = () => { if (unsubRef.current) unsubRef.current(); setRoom(null); setScreen('lobby'); };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 150,
-      background: 'radial-gradient(ellipse at center, #0d2b0d 0%, #071407 100%)',
-      display: 'flex', flexDirection: 'column',
-    }}>
+    <div style={{ position:'fixed', inset:0, zIndex:150, background:'radial-gradient(ellipse at center,#0d2b0d 0%,#071407 100%)', display:'flex', flexDirection:'column' }}>
       {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 16px',
-        background: 'rgba(0,0,0,0.6)',
-        borderBottom: '1px solid rgba(74,222,128,0.15)',
-        flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 22 }}>🃏</span>
-          <span style={{ color: '#4ade80', fontWeight: 900, letterSpacing: 3, fontSize: 14 }}>POKER ARENA</span>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 16px', background:'rgba(0,0,0,0.65)', borderBottom:'1px solid rgba(74,222,128,0.15)', flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:22 }}>🃏</span>
+          <span style={{ color:'#4ade80', fontWeight:900, letterSpacing:3, fontSize:14 }}>POKER ARENA</span>
+          {room && <span style={{ color:'#6b7280', fontSize:11, marginLeft:4 }}>• {room.players.filter(p=>p.isBot).length > 0 ? `${room.players.filter(p=>p.isBot).length} bots` : 'online'}</span>}
         </div>
-        <button onClick={onClose} style={{
-          width: 32, height: 32, borderRadius: 8,
-          background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-          color: '#f87171', fontSize: 16, cursor: 'pointer', display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-        }}>✕</button>
+        <button onClick={onClose} style={{ width:32, height:32, borderRadius:8, background:'rgba(239,68,68,0.15)', border:'1px solid rgba(239,68,68,0.3)', color:'#f87171', fontSize:16, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>✕</button>
       </div>
 
       {error && (
-        <div style={{ margin: '8px 16px', padding: '8px 14px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, color: '#f87171', fontSize: 13 }}>
+        <div style={{ margin:'8px 16px', padding:'8px 14px', background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:10, color:'#f87171', fontSize:13 }}>
           ⚠️ {error}
         </div>
       )}
 
-      {/* Content */}
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <div style={{ flex:1, overflow:'auto', minHeight:0 }}>
         {screen === 'lobby' && (
           <Lobby currentUser={currentUser} globalPlayers={globalPlayers}
             onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} />
@@ -707,7 +815,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
           <WaitingRoom room={room} currentUser={currentUser}
             onJoinAsPlayer={handleJoinAsPlayer} onStartDeal={handleStartDeal} onLeave={handleLeave} />
         )}
-        {screen === 'room' && room && (room.status === 'shuffling' || room.status === 'dealing' || room.status === 'reveal' || room.status === 'done') && (
+        {screen === 'room' && room && (room.status === 'shuffling' || room.status === 'reveal' || room.status === 'done') && (
           <PokerTable room={room} myId={myProfile.id}
             onReveal={handleReveal} onNewGame={handleNewGame} onLeave={handleLeave} />
         )}
