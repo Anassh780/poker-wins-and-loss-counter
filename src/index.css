@@ -416,3 +416,14 @@ body.ui-royal .card-vip {
   50%  { transform: rotateY(90deg); }
   100% { transform: rotateY(0deg); }
 }
+
+@keyframes deckShuffle {
+  0%   { transform: translateX(0) rotate(0deg); }
+  50%  { transform: translateX(6px) rotate(3deg); }
+  100% { transform: translateX(-6px) rotate(-3deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
