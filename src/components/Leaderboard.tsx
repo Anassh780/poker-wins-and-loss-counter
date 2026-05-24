@@ -15,9 +15,11 @@ interface LeaderboardProps {
   isGameActive?: boolean;
   activeGamePlayerIds?: string[];
   activeGamePlayerNames?: string[];
-  onVotePlayer?: (playerId: string, voteType: 'like' | 'dislike') => Promise<void>;
+  onVotePlayer?: (playerId: string, voteType: 'like' | 'dislike') => Promise<boolean>;
   currentUserId?: string;
   refreshTrigger?: number;
+  hasVotedInCurrentGame?: boolean;
+  activeGameStatus?: 'active' | 'ended' | '';
 }
 
 export const Leaderboard = ({
@@ -35,6 +37,8 @@ export const Leaderboard = ({
   onVotePlayer,
   currentUserId,
   refreshTrigger,
+  hasVotedInCurrentGame = false,
+  activeGameStatus = '',
 }: LeaderboardProps) => {
   const [sortMethod, setSortMethod] = useState<'wins' | 'winRate' | 'matches'>(sortBy);
   const [timeRange, setTimeRange] = useState<TimeRange>(showTimeFilter ? '24h' : 'all');
@@ -321,21 +325,23 @@ export const Leaderboard = ({
                         </div>
                     }
                   </div>
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <p className="font-cyber font-bold text-base truncate"
-                      style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
-                      {player.name}
-                    </p>
+                  <div className="flex flex-col items-start min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 min-w-0 w-full">
+                      <p className="font-cyber font-bold text-base truncate min-w-0"
+                        style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
+                        {player.name}
+                      </p>
+                      {player.isCertified && (
+                        <span className="text-yellow-400 flex-shrink-0 animate-pulse" title="Certified Player">
+                          <svg className="w-4 h-4 text-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
                     {isCountingRow && (
-                      <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
+                      <span className="mt-1 inline-flex w-fit text-[10px] font-cyber font-bold uppercase tracking-[0.18em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
                         PLAYING
-                      </span>
-                    )}
-                    {player.isCertified && (
-                      <span className="text-yellow-400 flex-shrink-0 animate-pulse" title="Certified Player">
-                        <svg className="w-4 h-4 text-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.75 8.6 1.5 6.71 4.7 3.1 5.52l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82 1.89 3.2L12 21.25l3.4 1.25 1.89-3.2 3.61-.82-.34-3.7L23 12zm-13 5l-4-4 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                        </svg>
                       </span>
                     )}
                   </div>
@@ -375,14 +381,9 @@ export const Leaderboard = ({
                   }
                 </div>
                 <div className="flex-1 min-w-0 pr-1">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 min-w-0">
                     <p className="font-cyber font-bold text-[11px] truncate"
                       style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
-                    {isCountingRow && (
-                      <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_8px_rgba(34,197,94,0.15)]">
-                        PLAYING
-                      </span>
-                    )}
                     {player.isCertified && (
                       <span className="text-yellow-400 flex-shrink-0" title="Certified Player">
                         <svg className="w-3.5 h-3.5 text-yellow-400 drop-shadow-[0_0_4px_rgba(250,204,21,0.6)]" viewBox="0 0 24 24" fill="currentColor">
@@ -391,7 +392,14 @@ export const Leaderboard = ({
                       </span>
                     )}
                   </div>
-                  <p className="text-[8px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp} games</p>
+                  <div className="mt-0.5 flex items-center gap-1.5 min-w-0">
+                    {isCountingRow && (
+                      <span className="inline-flex w-fit text-[8px] font-cyber font-bold uppercase tracking-[0.16em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-1.5 py-0.5 shadow-[0_0_8px_rgba(34,197,94,0.15)]">
+                        PLAYING
+                      </span>
+                    )}
+                    <span className="text-[8px]" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp} games</span>
+                  </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 text-right items-center">
                   <div className="w-6">
@@ -447,6 +455,20 @@ export const Leaderboard = ({
         ));
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
+        const canVote = !!onVotePlayer
+          && isCountingMode
+          && activeGameStatus === 'active'
+          && wr >= 85
+          && !isSelf
+          && !hasVotedInCurrentGame;
+        const votingMessage = (() => {
+          if (activeGameStatus === 'ended') return 'Voting closed - game ended.';
+          if (hasVotedInCurrentGame) return 'You already voted in this match.';
+          if (isSelf) return 'Self-voting is blocked.';
+          if (!isCountingMode) return 'Voting opens only for players in the active match.';
+          if (wr < 85) return 'Voting is only available for active players with >=85% win rate.';
+          return 'Voting is not available right now.';
+        })();
 
         let cardStyle: React.CSSProperties = {};
         if (clickCoords && !isMobile) {
@@ -539,13 +561,12 @@ export const Leaderboard = ({
                   <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
                 </div>
 
-                {(onVotePlayer && isCountingMode && wr >= 85) ? (
+                {canVote ? (
                   <div className="flex items-center gap-1.5 mt-1">
                     <button
                       onClick={async () => {
-                        if (isSelf) return;
-                        await onVotePlayer(previewPlayer.id, 'like');
-                        setPreviewPlayer(prev => prev ? { ...prev, likes: (prev.likes || 0) + 1 } : null);
+                        const didVote = await onVotePlayer(previewPlayer.id, 'like');
+                        if (didVote) setPreviewPlayer(prev => prev ? { ...prev, likes: (prev.likes || 0) + 1 } : null);
                       }}
                       disabled={isSelf}
                       className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
@@ -559,9 +580,8 @@ export const Leaderboard = ({
                     </button>
                     <button
                       onClick={async () => {
-                        if (isSelf) return;
-                        await onVotePlayer(previewPlayer.id, 'dislike');
-                        setPreviewPlayer(prev => prev ? { ...prev, dislikes: (prev.dislikes || 0) + 1 } : null);
+                        const didVote = await onVotePlayer(previewPlayer.id, 'dislike');
+                        if (didVote) setPreviewPlayer(prev => prev ? { ...prev, dislikes: (prev.dislikes || 0) + 1 } : null);
                       }}
                       disabled={isSelf}
                       className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-cyber font-bold border transition-all duration-200 ${
@@ -576,7 +596,7 @@ export const Leaderboard = ({
                   </div>
                 ) : (
                   <div className="text-[8px] text-center text-gray-500 font-cyber py-1 border border-dashed border-white/5 rounded-lg mt-0.5">
-                    Voting is only available for active players with ≥85% win rate.
+                    {votingMessage}
                   </div>
                 )}
               </div>

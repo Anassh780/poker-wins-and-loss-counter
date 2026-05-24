@@ -6,6 +6,7 @@ import { RecoveryPanel } from './RecoveryPanel';
 import { AdminManagement } from './AdminManagement';
 import { uploadAvatar } from '../lib/firebase';
 import type { AdminPermissions } from './AdminManagement';
+import { VotersList } from './VotersList';
 
 import type { Player } from '../types';
 
@@ -25,6 +26,7 @@ interface ProfileViewProps {
   onAvatarChange: (url: string) => void;
   currentAvatar?: string;
   activeUsersColl: any;
+  isTestingMode: boolean;
 }
 
 export const ProfileView = ({
@@ -43,6 +45,7 @@ export const ProfileView = ({
   onAvatarChange,
   currentAvatar,
   activeUsersColl,
+  isTestingMode,
 }: ProfileViewProps) => {
   const [tab, setTab] = useState<'profile' | 'avatars' | 'achievements' | 'arcade' | 'admin' | 'manage_admins'>('profile');
   const [selectedCategory, setSelectedCategory] = useState(AVATAR_CATEGORIES[0]);
@@ -332,6 +335,8 @@ export const ProfileView = ({
                         💡 <i>Tip: Earn Likes by playing wisely and demonstrating superior gameplay during active games!</i>
                       </div>
                     )}
+
+                    <VotersList playerId={myStats?.id} isTestingMode={isTestingMode} />
                   </div>
                 </div>
               );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { User } from 'firebase/auth';
 import { AVATARS, AVATAR_CATEGORIES } from '../data/avatars';
 import { getUnlockedAchievements, ACHIEVEMENTS } from '../data/achievements';
+import { VotersList } from './VotersList';
 import type { Player } from '../types';
 
 interface ProfileModalProps {
@@ -16,6 +17,7 @@ interface ProfileModalProps {
   onShowBackup?: () => void;
   onAvatarChange: (url: string) => void;
   currentAvatar?: string;
+  isTestingMode: boolean;
 }
 
 export const ProfileModal = ({ 
@@ -29,7 +31,8 @@ export const ProfileModal = ({
   onClose,
   onShowBackup,
   onAvatarChange, 
-  currentAvatar 
+  currentAvatar,
+  isTestingMode,
 }: ProfileModalProps) => {
   const [tab, setTab] = useState<'profile' | 'avatars' | 'achievements' | 'admin'>('profile');
   const [selectedCategory, setSelectedCategory] = useState(AVATAR_CATEGORIES[0]);
@@ -256,6 +259,8 @@ export const ProfileModal = ({
                           💡 <i>Tip: Earn Likes by playing wisely and demonstrating superior gameplay during active games!</i>
                         </div>
                       )}
+
+                      <VotersList playerId={myStats?.id} isTestingMode={isTestingMode} />
                     </div>
                   </div>
                 );
