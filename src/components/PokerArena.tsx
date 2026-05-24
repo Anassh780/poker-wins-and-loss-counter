@@ -546,7 +546,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto"
+    <div className="fixed inset-0 z-[150] flex items-start justify-center overflow-y-auto"
       style={{ background: 'rgba(5,8,30,0.97)', backdropFilter: 'blur(8px)' }}>
       <div className="w-full max-w-2xl min-h-screen relative">
         {/* Header bar */}

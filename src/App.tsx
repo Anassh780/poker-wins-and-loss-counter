@@ -986,6 +986,15 @@ export default function App() {
       {/* Global Error Diagnostics */}
       <ErrorSidebar isAdmin={isAdmin} />
 
+      {/* Poker Arena Overlay — global, shows over any view */}
+      {showArena && (
+        <PokerArena
+          currentUser={currentUser}
+          globalPlayers={globalPlayers}
+          onClose={() => setShowArena(false)}
+        />
+      )}
+
       {/* Offline Alert Popup */}
       {isOffline && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
@@ -1392,15 +1401,6 @@ export default function App() {
             onDelete={handleAdminDelete}
             onClose={() => setAdminEditingPlayer(null)}
             canDelete={adminEditTimeRange === 'all'}
-          />
-        )}
-
-        {/* Poker Arena Overlay */}
-        {showArena && (
-          <PokerArena
-            currentUser={currentUser}
-            globalPlayers={globalPlayers}
-            onClose={() => setShowArena(false)}
           />
         )}
       </div>
