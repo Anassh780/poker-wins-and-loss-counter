@@ -1,18 +1,10 @@
 import { useState, useEffect, useRef, type FC } from 'react';
 import { PlayingCard, type CardData, type Suit, type Rank } from './PlayingCard';
-import { db, configCollection } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface ArenaPlayer {
-  id: string;
-  name: string;
-  avatar: string;
-  cards: CardData[];
-  revealed: boolean;
-}
-
 interface ArenaRoom {
   roomId: string;
   hostId: string;
@@ -70,7 +62,7 @@ const Lobby: FC<{
   globalPlayers: { id: string; name: string; avatar: string }[];
   onCreateRoom: (playerCount: number) => void;
   onJoinRoom: (roomId: string) => void;
-}> = ({ currentUser, globalPlayers, onCreateRoom, onJoinRoom }) => {
+}> = ({ currentUser, onCreateRoom, onJoinRoom }) => {
   const [count, setCount] = useState(2);
   const [joinId, setJoinId] = useState('');
   const [tab, setTab] = useState<'create' | 'join'>('create');
@@ -151,7 +143,7 @@ const WaitingRoom: FC<{
   onJoinAsPlayer: () => void;
   onStartDeal: () => void;
   onLeave: () => void;
-}> = ({ room, currentUser, myProfile, onJoinAsPlayer, onStartDeal, onLeave }) => {
+}> = ({ room, currentUser, onJoinAsPlayer, onStartDeal, onLeave }) => {
   const isHost = currentUser?.uid === room.hostId;
   const amInRoom = room.players.some(p => p.id === currentUser?.uid);
   const canStart = isHost && room.players.length >= 2;
@@ -284,9 +276,6 @@ const HandDisplay: FC<{
     if (revealed) setShowCards(true);
   }, [revealed]);
 
-  // How many cards to show per row based on count
-  const perRow = cards.length <= 13 ? cards.length : Math.ceil(cards.length / 2);
-
   return (
     <div className={`rounded-2xl border p-4 transition-all ${isMe ? 'border-cyan-500/60 bg-cyan-500/5' : 'border-white/10 bg-black/20'}`}>
       {/* Player header */}
@@ -339,7 +328,6 @@ const GameTable: FC<{
   const isHost = currentUser?.uid === room.hostId;
   const allRevealed = room.players.length > 0 && room.players.every(p => room.revealedBy.includes(p.id));
   const myId = currentUser?.uid || '';
-  const iHaveRevealed = room.revealedBy.includes(myId);
 
   useEffect(() => {
     if (room.status === 'shuffling' || room.status === 'dealing') {
@@ -448,7 +436,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
 
   useEffect(() => () => { if (unsubRef.current) unsubRef.current(); }, []);
 
-  const handleCreateRoom = async (playerCount: number) => {
+  const handleCreateRoom = async (_playerCount: number) => {
     setError('');
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     const newRoom: ArenaRoom = {
