@@ -453,90 +453,88 @@ const DeckPile: FC<{ count: number; isShuffling: boolean }> = ({ count, isShuffl
 );
 
 // ══════════════════════════════════════════════════════════════════════════════
-// FAN HAND — cards overlapping in a fan, only rank+suit corner visible
+// FAN HAND — proper overlapping fan, numbers clearly visible
 // ══════════════════════════════════════════════════════════════════════════════
 const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ cards, faceDown, isMe }) => {
   if (cards.length === 0) return null;
-
-  // Fan parameters — tighter for opponents, wider for player
-  const maxFanWidth = isMe ? 160 : 80;   // total width of the fan
-  const cardW = isMe ? 46 : 32;          // visible card width
-  const cardH = isMe ? 64 : 44;          // card height
   const n = cards.length;
-  const spread = Math.min(maxFanWidth / Math.max(n - 1, 1), isMe ? 22 : 14);
-  const totalW = cardW + spread * (n - 1);
-  const maxRot = isMe ? 3 : 2;           // max rotation degrees per card
+
+  // My cards: bigger, more spread. Opponent: smaller, tighter
+  const cardW  = isMe ? 52  : 28;
+  const cardH  = isMe ? 76  : 40;
+  // Overlap: show at least 14px of each card (rank+suit corner)
+  const overlap = isMe ? Math.max(14, cardW - Math.min(28, 260 / n)) : Math.max(10, cardW - Math.min(16, 120 / n));
+  const step    = cardW - overlap;
+  const totalW  = cardW + step * (n - 1);
+  const maxTilt = isMe ? 0 : 1.5; // slight tilt for opponents only
+
+  const red = (suit: string) => suit === '♥' || suit === '♦';
 
   return (
-    <div style={{ position:'relative', width: totalW, height: cardH + 8, flexShrink:0 }}>
+    <div style={{ position: 'relative', width: totalW, height: cardH + 4, flexShrink: 0 }}>
       {cards.map((card, i) => {
-        const rot = n > 1 ? ((i / (n - 1)) - 0.5) * maxRot * 2 : 0;
-        const x = i * spread;
-        const yOffset = Math.abs(rot) * 0.5; // slight arc
+        const tilt = n > 1 ? ((i / (n - 1)) - 0.5) * maxTilt * 2 : 0;
         return (
           <div key={i} style={{
-            position:'absolute', left: x, top: yOffset,
-            zIndex: i,
-            transform: `rotate(${rot}deg)`,
-            animation: `dealIn 0.3s ease-out ${i * 0.04}s both`,
+            position: 'absolute',
+            left: i * step,
+            top: 0,
+            zIndex: i + 1,
+            transform: `rotate(${tilt}deg)`,
             transformOrigin: 'bottom center',
+            animation: `dealIn 0.3s ease-out ${i * 0.05}s both`,
           }}>
             {faceDown ? (
-              // Face-down: show blue card back, compact size
               <div style={{
                 width: cardW, height: cardH, borderRadius: 5,
-                background: 'linear-gradient(135deg,#1e3a8a,#1d4ed8)',
-                border: '1.5px solid #fff',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
-                display:'flex', alignItems:'center', justifyContent:'center',
+                background: 'linear-gradient(160deg,#1e3a8a 0%,#1d4ed8 100%)',
+                border: '2px solid #fff',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
                 <div style={{
                   width: cardW - 8, height: cardH - 8, borderRadius: 3,
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  background: 'repeating-linear-gradient(45deg,rgba(255,255,255,0.03) 0,rgba(255,255,255,0.03) 2px,transparent 2px,transparent 8px)',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  background: 'repeating-linear-gradient(45deg,rgba(255,255,255,0.04) 0,rgba(255,255,255,0.04) 2px,transparent 2px,transparent 7px)',
                 }} />
               </div>
             ) : (
-              // Face-up: show rank+suit corner card
               <div style={{
                 width: cardW, height: cardH, borderRadius: 5,
-                background: '#fff', border: '1.5px solid #ccc',
-                boxShadow: '0 3px 8px rgba(0,0,0,0.35)',
-                display:'flex', flexDirection:'column',
-                padding: '2px 3px', boxSizing:'border-box',
-                overflow:'hidden',
+                background: '#fff', border: '1.5px solid #bbb',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.4)',
+                display: 'flex', flexDirection: 'column',
+                padding: isMe ? '3px 4px' : '2px 3px',
+                boxSizing: 'border-box', overflow: 'hidden',
               }}>
-                {/* Top-left corner */}
-                <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', lineHeight:1 }}>
+                {/* Top-left: rank + suit stacked */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1, flexShrink: 0 }}>
                   <span style={{
-                    fontSize: isMe ? 11 : 8, fontWeight:900,
-                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
-                    fontFamily:'Arial Black,Arial,sans-serif', lineHeight:1,
+                    fontSize: isMe ? 13 : 8, fontWeight: 900, lineHeight: 1,
+                    color: red(card.suit) ? '#cc0000' : '#111',
+                    fontFamily: 'Arial Black, Arial, sans-serif',
                   }}>{card.rank}</span>
                   <span style={{
-                    fontSize: isMe ? 10 : 7,
-                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
-                    lineHeight:1,
+                    fontSize: isMe ? 11 : 7, lineHeight: 1,
+                    color: red(card.suit) ? '#cc0000' : '#111',
                   }}>{card.suit}</span>
                 </div>
-                {/* Center suit */}
-                <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                {/* Center suit — only show on my cards */}
+                {isMe && (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 20, color: red(card.suit) ? '#cc0000' : '#111' }}>{card.suit}</span>
+                  </div>
+                )}
+                {/* Bottom-right rotated */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.1, transform: 'rotate(180deg)', flexShrink: 0 }}>
                   <span style={{
-                    fontSize: isMe ? 18 : 12,
-                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
-                  }}>{card.suit}</span>
-                </div>
-                {/* Bottom-right corner (rotated) */}
-                <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', lineHeight:1, transform:'rotate(180deg)' }}>
-                  <span style={{
-                    fontSize: isMe ? 11 : 8, fontWeight:900,
-                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
-                    fontFamily:'Arial Black,Arial,sans-serif', lineHeight:1,
+                    fontSize: isMe ? 13 : 8, fontWeight: 900, lineHeight: 1,
+                    color: red(card.suit) ? '#cc0000' : '#111',
+                    fontFamily: 'Arial Black, Arial, sans-serif',
                   }}>{card.rank}</span>
                   <span style={{
-                    fontSize: isMe ? 10 : 7,
-                    color: (card.suit==='♥'||card.suit==='♦') ? '#d40000' : '#111',
-                    lineHeight:1,
+                    fontSize: isMe ? 11 : 7, lineHeight: 1,
+                    color: red(card.suit) ? '#cc0000' : '#111',
                   }}>{card.suit}</span>
                 </div>
               </div>
@@ -549,7 +547,7 @@ const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ 
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PLAYER SEAT
+// PLAYER SEAT — cards on top, avatar+name BELOW
 // ══════════════════════════════════════════════════════════════════════════════
 const PlayerSeat: FC<{
   player: ArenaPlayer; cards: CardData[];
@@ -562,68 +560,73 @@ const PlayerSeat: FC<{
   const dealtCards = cards.slice(0, visibleCount);
   const isBot = player.isBot;
   const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
+  const avatarSize = isMe ? 40 : 32;
 
   useEffect(() => { if (revealed && isMe) setShowCards(true); }, [revealed, isMe]);
 
-  const avatarSize = isMe ? 44 : 36;
+  // Name tag component
+  const NameTag = (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, marginTop: 3 }}>
+      <div style={{ position: 'relative' }}>
+        <div style={{
+          width: avatarSize, height: avatarSize, borderRadius: '50%', overflow: 'hidden',
+          border: isMe ? '2.5px solid #4ade80' : isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.35)',
+          boxShadow: isMe ? '0 0 12px rgba(74,222,128,0.5)' : '0 2px 6px rgba(0,0,0,0.6)',
+          background: isBot ? 'linear-gradient(135deg,#1d4ed8,#7c3aed)' : 'linear-gradient(135deg,#16a34a,#7c3aed)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 900, fontSize: isBot ? 16 : 13, color: '#fff', flexShrink: 0,
+        }}>
+          {!isBot && player.avatar
+            ? <img src={player.avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            : isBot ? BOT_CONFIGS[player.botLevel || 'rookie'].emoji
+            : player.name[0]?.toUpperCase()}
+        </div>
+        {isThinking && (
+          <div style={{ position: 'absolute', top: -4, right: -4, background: '#1d4ed8', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, animation: 'pulse 0.6s infinite' }}>💭</div>
+        )}
+      </div>
+      <div style={{ background: 'rgba(0,0,0,0.85)', borderRadius: 5, padding: '1px 6px', maxWidth: 88, textAlign: 'center' }}>
+        <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight: 900, fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 84, margin: 0 }}>
+          {isMe ? 'YOU' : player.name}
+        </p>
+        {isBot && botDecision && !isThinking && (
+          <p style={{ color: '#6b7280', fontSize: 8, fontStyle: 'italic', margin: 0, maxWidth: 84, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{botDecision.comment}"</p>
+        )}
+        {isBot && botDecision && (
+          <p style={{ color: levelColor, fontSize: 8, fontWeight: 900, margin: 0 }}>{botDecision.handInfo.description}</p>
+        )}
+      </div>
+    </div>
+  );
 
+  if (isMe) {
+    // MY SEAT: cards on top, avatar below, see-cards button below avatar
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+        {dealtCards.length > 0 && (
+          <FanHand cards={dealtCards} faceDown={!showCards} isMe={true} />
+        )}
+        {NameTag}
+        {dealtCards.length > 0 && !showCards && (
+          <button onClick={() => { setShowCards(true); onReveal(); }}
+            style={{ marginTop: 4, padding: '5px 16px', borderRadius: 8, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', fontWeight: 900, fontSize: 11, border: 'none', cursor: 'pointer', boxShadow: '0 2px 10px rgba(22,163,74,0.5)' }}>
+            👁 SEE MY CARDS
+          </button>
+        )}
+        {dealtCards.length > 0 && showCards && (
+          <span style={{ marginTop: 3, fontSize: 9, color: '#4ade80', fontWeight: 700 }}>✓ Revealed</span>
+        )}
+      </div>
+    );
+  }
+
+  // OPPONENT SEAT: cards on top, avatar below
   return (
-    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3 }}>
-      {/* Fan of cards ABOVE avatar for opponents, BELOW for me */}
-      {!isMe && dealtCards.length > 0 && (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+      {dealtCards.length > 0 && (
         <FanHand cards={dealtCards} faceDown={true} isMe={false} />
       )}
-
-      {/* Avatar + name row */}
-      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
-        <div style={{ position:'relative' }}>
-          <div style={{
-            width: avatarSize, height: avatarSize, borderRadius:'50%', overflow:'hidden',
-            border: isMe ? '2.5px solid #4ade80' : isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.3)',
-            boxShadow: isMe ? '0 0 14px rgba(74,222,128,0.5)' : '0 2px 6px rgba(0,0,0,0.5)',
-            background: isBot ? 'linear-gradient(135deg,#1d4ed8,#7c3aed)' : 'linear-gradient(135deg,#16a34a,#7c3aed)',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            fontWeight:900, fontSize: isBot ? 18 : 14, color:'#fff', flexShrink:0,
-          }}>
-            {!isBot && player.avatar
-              ? <img src={player.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
-              : isBot ? BOT_CONFIGS[player.botLevel||'rookie'].emoji
-              : player.name[0]?.toUpperCase()
-            }
-          </div>
-          {isThinking && (
-            <div style={{ position:'absolute', top:-5, right:-5, background:'#1d4ed8', borderRadius:'50%', width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, animation:'pulse 0.6s infinite' }}>💭</div>
-          )}
-        </div>
-        <div style={{ background:'rgba(0,0,0,0.82)', borderRadius:6, padding:'1px 6px', maxWidth:90 }}>
-          <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight:900, fontSize:9, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:86, margin:0 }}>
-            {isMe ? 'YOU' : player.name}
-          </p>
-          {isBot && botDecision && !isThinking && (
-            <p style={{ color:'#6b7280', fontSize:8, fontStyle:'italic', margin:0, maxWidth:86, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-              "{botDecision.comment}"
-            </p>
-          )}
-          {isBot && botDecision && (
-            <p style={{ color: levelColor, fontSize:8, fontWeight:900, margin:0 }}>{botDecision.handInfo.description}</p>
-          )}
-        </div>
-      </div>
-
-      {/* My cards below avatar */}
-      {isMe && dealtCards.length > 0 && (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-          <FanHand cards={dealtCards} faceDown={!showCards} isMe={true} />
-          {!showCards ? (
-            <button onClick={() => { setShowCards(true); onReveal(); }}
-              style={{ padding:'4px 14px', borderRadius:7, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', fontWeight:900, fontSize:10, border:'none', cursor:'pointer', boxShadow:'0 2px 8px rgba(22,163,74,0.4)' }}>
-              👁 SEE MY CARDS
-            </button>
-          ) : (
-            <span style={{ fontSize:9, color:'#4ade80', fontWeight:700 }}>✓ Cards revealed</span>
-          )}
-        </div>
-      )}
+      {NameTag}
     </div>
   );
 };
@@ -694,26 +697,58 @@ const PokerTable: FC<{
     : null;
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
-      {/* Table — overflow:hidden keeps cards inside */}
-      <div style={{ flex:1, position:'relative', overflow:'hidden', minHeight:0 }}>
-        <div style={{ position:'absolute', inset:0, background:'#0a1f0a' }} />
-        {/* Wood border ellipse */}
-        <div style={{ position:'absolute', top:'4%', left:'3%', right:'3%', bottom:'4%', borderRadius:'50%', background:'linear-gradient(145deg,#8B5E3C,#5C3A1E,#8B5E3C)', boxShadow:'0 6px 30px rgba(0,0,0,0.8)' }} />
-        {/* Green felt ellipse */}
-        <div style={{ position:'absolute', top:'9%', left:'7%', right:'7%', bottom:'9%', borderRadius:'50%', background:'radial-gradient(ellipse at center,#1a6b2e 0%,#145a25 55%,#0f4a1e 100%)', boxShadow:'inset 0 4px 24px rgba(0,0,0,0.4)' }}>
-          <div style={{ position:'absolute', inset:0, borderRadius:'50%', opacity:0.04, backgroundImage:'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize:'8px 8px' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Table fills all available space */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Dark bg */}
+        <div style={{ position: 'absolute', inset: 0, background: '#071407' }} />
+
+        {/* Wood border — proper wide ellipse */}
+        <div style={{
+          position: 'absolute',
+          top: '8%', bottom: '8%', left: '4%', right: '4%',
+          borderRadius: '50%',
+          background: 'linear-gradient(160deg,#a0714f 0%,#6b3f1f 40%,#8B5E3C 70%,#5C3A1E 100%)',
+          boxShadow: '0 8px 40px rgba(0,0,0,0.9), inset 0 2px 4px rgba(255,220,150,0.15)',
+        }} />
+
+        {/* Green felt — inset from wood */}
+        <div style={{
+          position: 'absolute',
+          top: '13%', bottom: '13%', left: '8%', right: '8%',
+          borderRadius: '50%',
+          background: 'radial-gradient(ellipse at 50% 40%, #1e7a35 0%, #155c28 50%, #0e4a1e 100%)',
+          boxShadow: 'inset 0 6px 30px rgba(0,0,0,0.5), inset 0 -4px 20px rgba(0,0,0,0.3)',
+        }}>
+          {/* Felt texture */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%', opacity: 0.035,
+            backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)',
+            backgroundSize: '6px 6px',
+          }} />
         </div>
 
-        {/* Center deck */}
-        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+        {/* Center deck pile */}
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 15, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+        }}>
           <DeckPile count={deckLeft} isShuffling={isShuffling} />
-          {isShuffling && <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#4ade80', fontWeight:900, fontSize:11, letterSpacing:2, animation:'pulse 0.8s infinite' }}>🔀 SHUFFLING...</div>}
-          {botWinner && allDealt && <div style={{ background:'rgba(0,0,0,0.85)', borderRadius:8, padding:'3px 10px', color:'#f59e0b', fontWeight:900, fontSize:10 }}>🏆 {botWinner.name}</div>}
+          {isShuffling && (
+            <div style={{ background: 'rgba(0,0,0,0.9)', borderRadius: 8, padding: '4px 12px', color: '#4ade80', fontWeight: 900, fontSize: 12, letterSpacing: 2, animation: 'pulse 0.8s infinite' }}>
+              🔀 SHUFFLING...
+            </div>
+          )}
+          {botWinner && allDealt && (
+            <div style={{ background: 'rgba(0,0,0,0.9)', borderRadius: 8, padding: '4px 12px', color: '#f59e0b', fontWeight: 900, fontSize: 11 }}>
+              🏆 {botWinner.name} wins!
+            </div>
+          )}
         </div>
 
-        {/* Seats — absolutely positioned, no overflow */}
-        <div style={{ position:'absolute', inset:0, zIndex:20 }}>
+        {/* Player seats */}
+        <div style={{ position: 'absolute', inset: 0, zIndex: 20 }}>
           {ordered.map((player, seatIdx) => (
             <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length) }}>
               <PlayerSeat
@@ -728,19 +763,26 @@ const PokerTable: FC<{
         </div>
       </div>
 
-      {/* Action bar */}
-      <div style={{ padding:'8px 14px 10px', display:'flex', gap:8, alignItems:'center', background:'rgba(0,0,0,0.7)', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
-        <div style={{ flex:1, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-          <span style={{ color:'#4ade80', fontSize:11, fontWeight:700, fontFamily:'monospace', letterSpacing:2 }}>{room.roomId}</span>
-          <span style={{ color:'#6b7280', fontSize:10 }}>• {room.players.filter(p=>!p.isBot).length} human{room.players.filter(p=>p.isBot).length>0?` + ${room.players.filter(p=>p.isBot).length} bot`:''}</span>
-          {allDealt && <span style={{ color:'#4ade80', fontSize:10, fontWeight:700 }}>✓ Dealt</span>}
+      {/* Bottom action bar — fixed height */}
+      <div style={{
+        height: 44, padding: '0 16px', display: 'flex', gap: 10, alignItems: 'center',
+        background: 'rgba(0,0,0,0.85)', borderTop: '1px solid rgba(255,255,255,0.08)',
+        flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700, fontFamily: 'monospace', letterSpacing: 2 }}>{room.roomId}</span>
+          <span style={{ color: '#6b7280', fontSize: 10 }}>
+            {room.players.filter(p => !p.isBot).length}👤
+            {room.players.filter(p => p.isBot).length > 0 && ` + ${room.players.filter(p => p.isBot).length}🤖`}
+          </span>
+          {allDealt && <span style={{ color: '#4ade80', fontSize: 10, fontWeight: 700 }}>✓ All dealt</span>}
         </div>
         {isHost && allDealt && (
-          <button onClick={onNewGame} style={{ padding:'6px 14px', borderRadius:9, fontWeight:900, fontSize:12, background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', cursor:'pointer' }}>
+          <button onClick={onNewGame} style={{ padding: '6px 16px', borderRadius: 8, fontWeight: 900, fontSize: 12, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', cursor: 'pointer' }}>
             🔀 New Deal
           </button>
         )}
-        <button onClick={onLeave} style={{ padding:'6px 12px', borderRadius:9, fontWeight:700, fontSize:12, background:'rgba(239,68,68,0.15)', color:'#f87171', border:'1px solid rgba(239,68,68,0.3)', cursor:'pointer' }}>
+        <button onClick={onLeave} style={{ padding: '6px 14px', borderRadius: 8, fontWeight: 700, fontSize: 12, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
           Leave
         </button>
       </div>
@@ -774,6 +816,13 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   };
 
   useEffect(() => () => { if (unsubRef.current) unsubRef.current(); }, []);
+
+  // Lock body scroll while arena is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
 
   const handleCreateRoom = async (_totalSeats: number, bots: { count: number; level: BotLevel }) => {
     setError('');
@@ -847,7 +896,12 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   const handleLeave = () => { if (unsubRef.current) unsubRef.current(); setRoom(null); setScreen('lobby'); };
 
   return (
-    <div style={{ position:'fixed', inset:0, zIndex:150, background:'radial-gradient(ellipse at center,#0d2b0d 0%,#071407 100%)', display:'flex', flexDirection:'column' }}>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'radial-gradient(ellipse at center,#0d2b0d 0%,#071407 100%)',
+      display: 'flex', flexDirection: 'column',
+      overflow: 'hidden', // prevent any scroll
+    }}>
       {/* Header */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 16px', background:'rgba(0,0,0,0.65)', borderBottom:'1px solid rgba(74,222,128,0.15)', flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -864,14 +918,18 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
         </div>
       )}
 
-      <div style={{ flex:1, overflow:'auto', minHeight:0 }}>
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {screen === 'lobby' && (
-          <Lobby currentUser={currentUser} globalPlayers={globalPlayers}
-            onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} />
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            <Lobby currentUser={currentUser} globalPlayers={globalPlayers}
+              onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} />
+          </div>
         )}
         {screen === 'room' && room && room.status === 'waiting' && (
-          <WaitingRoom room={room} currentUser={currentUser}
-            onJoinAsPlayer={handleJoinAsPlayer} onStartDeal={handleStartDeal} onLeave={handleLeave} />
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            <WaitingRoom room={room} currentUser={currentUser}
+              onJoinAsPlayer={handleJoinAsPlayer} onStartDeal={handleStartDeal} onLeave={handleLeave} />
+          </div>
         )}
         {screen === 'room' && room && (room.status === 'shuffling' || room.status === 'reveal' || room.status === 'done') && (
           <PokerTable room={room} myId={myProfile.id}
