@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type FC } from 'react';
 import { PlayingCard, type CardData, type Suit, type Rank } from './PlayingCard';
 import { db } from '../lib/firebase';
-import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
       // Add self to players list
       setTimeout(async () => {
         try {
-          const snap = await import('firebase/firestore').then(m => m.getDoc(ref));
+          const snap = await getDoc(ref);
           if (!snap.exists()) { setError('Room not found.'); setScreen('lobby'); return; }
           const data = snap.data() as ArenaRoom;
           if (data.players.some(p => p.id === myProfile.id)) return;
