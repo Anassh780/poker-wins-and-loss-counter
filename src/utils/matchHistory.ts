@@ -76,11 +76,9 @@ export const getCutoff = (range: TimeRange): number => {
     }
     case '30d': {
       // Calendar month: 1st of the current month at 5:00 AM
-      // Before 5 AM on the 1st, show previous month's data (same pattern as daily/weekly)
+      // Monthly stats clear immediately when the calendar month changes;
+      // new counting begins at 5 AM on the 1st.
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 5, 0, 0, 0);
-      if (now.getTime() < monthStart.getTime()) {
-        monthStart.setMonth(monthStart.getMonth() - 1);
-      }
       return monthStart.getTime();
     }
     case 'all':
