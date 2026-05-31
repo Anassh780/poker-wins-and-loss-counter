@@ -51,7 +51,7 @@ export type TimeRange = '24h' | '7d' | '30d' | 'all';
  * - 30d  → first day of the current calendar month.
  * - all  → epoch (0).
  */
-const getCutoff = (range: TimeRange): number => {
+export const getCutoff = (range: TimeRange): number => {
   const now = new Date();
   switch (range) {
     case '24h': {
@@ -76,16 +76,74 @@ const getCutoff = (range: TimeRange): number => {
     }
     case '30d': {
       // Calendar month: 1st of the current month at 5:00 AM
+      // No fallback to previous month — stats reset immediately when the calendar flips
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 5, 0, 0, 0);
-      // If it's the 1st but before 5 AM, the last reset was the previous month's 1st at 5 AM
-      if (now.getTime() < monthStart.getTime()) {
-        monthStart.setMonth(monthStart.getMonth() - 1);
-      }
       return monthStart.getTime();
     }
     case 'all':
       return 0;
   }
+};
+
+/**
+ * Returns the start/end timestamps for the PREVIOUS completed period.
+ * Used for determining period champions.
+ */
+export const getPreviousPeriodRange = (range: TimeRange): { start: number; end: number } | null => {
+  const currentCutoff = getCutoff(range);
+  switch (range) {
+    case '24h':
+      return { start: currentCutoff - 24 * 60 * 60 * 1000, end: currentCutoff };
+    case '7d':
+      return { start: currentCutoff - 7 * 24 * 60 * 60 * 1000, end: currentCutoff };
+    case '30d': {
+      const d = new Date(currentCutoff);
+      d.setMonth(d.getMonth() - 1);
+      return { start: d.getTime(), end: currentCutoff };
+    }
+    default:
+      return null;
+  }
+};
+
+/**
+ * Fetch match history between two timestamps and aggregate into leaderboard data.
+ * Used to determine period champions from the previous period.
+ */
+export const getLeaderboardForPeriod = async (
+  startTs: number,
+  endTs: number,
+  isTestingMode: boolean
+): Promise<AggregatedPlayer[]> => {
+  const collRef = collection(db, 'match_history');
+  const q = query(collRef, where('timestamp', '>=', startTs));
+  const snap = await getDocs(q);
+  const map = new Map<string, AggregatedPlayer>();
+
+  snap.forEach((docSnap) => {
+    const d = docSnap.data() as MatchHistoryEntry;
+    if (d.isTestingMode !== isTestingMode) return;
+    if (d.timestamp >= endTs) return; // client-side upper bound
+    if (d.timeframe) return; // skip manual adjustments
+
+    const existing = map.get(d.playerId);
+    if (existing) {
+      existing.wins += d.wins;
+      existing.losses += d.losses;
+      existing.name = d.playerName;
+      existing.avatar = d.playerAvatar;
+    } else {
+      map.set(d.playerId, {
+        id: d.playerId,
+        name: d.playerName,
+        avatar: d.playerAvatar,
+        wins: d.wins,
+        losses: d.losses,
+      });
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => b.wins - a.wins);
 };
 
 /**
@@ -132,6 +190,20 @@ export interface AggregatedPlayer {
   avatar: string;
   wins: number;
   losses: number;
+}
+
+export interface PeriodChampion {
+  playerName: string;
+  playerId: string;
+  playerAvatar: string;
+  wins: number;
+  periodLabel: string;
+}
+
+export interface PeriodChampions {
+  daily: PeriodChampion | null;
+  weekly: PeriodChampion | null;
+  monthly: PeriodChampion | null;
 }
 
 /**

@@ -17,12 +17,12 @@ import {
   shareToWhatsApp,
   generateResultSummary,
 } from './utils/imageExport';
-import { logMatchResults, getFilteredLeaderboard, type TimeRange } from './utils/matchHistory';
+import { logMatchResults, getFilteredLeaderboard, getCutoff, getPreviousPeriodRange, getLeaderboardForPeriod, type TimeRange, type PeriodChampion, type PeriodChampions } from './utils/matchHistory';
 import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
 import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc, getDoc } from 'firebase/firestore';
 import './index.css';
 
 type View = 'setup' | 'game' | 'result';
@@ -53,6 +53,7 @@ export default function App() {
   const [mobileTab, setMobileTab] = useState<'controls' | 'leaderboard'>('leaderboard');
   const [dbError, setDbError] = useState<string | null>(null);
   const [showResultBackup, setShowResultBackup] = useState(false);
+  const [periodChampions, setPeriodChampions] = useState<PeriodChampions>({ daily: null, weekly: null, monthly: null });
   
   // Admin logic
   const [adminEditingPlayer, setAdminEditingPlayer] = useState<Player | null>(null);
@@ -151,6 +152,86 @@ export default function App() {
       console.error('Failed to save admin permissions', e);
     }
   };
+
+  // ── Period Champions: listen to Firestore document ──
+  useEffect(() => {
+    const champDocId = isTestingMode ? 'period_champions_beta' : 'period_champions';
+    const unsub = onSnapshot(doc(configCollection, champDocId), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setPeriodChampions({
+          daily: data.daily || null,
+          weekly: data.weekly || null,
+          monthly: data.monthly || null,
+        });
+      }
+    }, (err) => console.warn('period_champions listener failed:', err));
+    return () => unsub();
+  }, [isTestingMode]);
+
+  // ── Period Champions: check for resets and record winners ──
+  useEffect(() => {
+    if (!currentUser) return;
+    const checkChampions = async () => {
+      try {
+        const champDocId = isTestingMode ? 'period_champions_beta' : 'period_champions';
+        const champDocRef = doc(configCollection, champDocId);
+        const champSnap = await getDoc(champDocRef);
+        const existingData = champSnap.exists() ? champSnap.data() : {};
+
+        const periods: { range: TimeRange; key: keyof PeriodChampions }[] = [
+          { range: '24h', key: 'daily' },
+          { range: '7d', key: 'weekly' },
+          { range: '30d', key: 'monthly' },
+        ];
+
+        const updates: Record<string, any> = {};
+        let hasUpdates = false;
+
+        for (const { range, key } of periods) {
+          const currentCutoff = getCutoff(range);
+          const storedCutoff = existingData[`${key}_cutoff`] || 0;
+
+          if (storedCutoff === 0) {
+            // First run: just record current cutoff, don't compute any champion (start fresh)
+            updates[`${key}_cutoff`] = currentCutoff;
+            hasUpdates = true;
+          } else if (currentCutoff !== storedCutoff) {
+            // Period has reset — find the winner of the previous period
+            const prevRange = getPreviousPeriodRange(range);
+            if (prevRange) {
+              const players = await getLeaderboardForPeriod(prevRange.start, prevRange.end, isTestingMode);
+              if (players.length > 0 && players[0].wins > 0) {
+                const winner = players[0];
+                const periodEnd = new Date(prevRange.end);
+                const label = key === 'daily'
+                  ? periodEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  : key === 'weekly'
+                    ? `Week of ${new Date(prevRange.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                    : periodEnd.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                updates[key] = {
+                  playerName: winner.name,
+                  playerId: winner.id,
+                  playerAvatar: winner.avatar,
+                  wins: winner.wins,
+                  periodLabel: label,
+                } satisfies PeriodChampion;
+              }
+            }
+            updates[`${key}_cutoff`] = currentCutoff;
+            hasUpdates = true;
+          }
+        }
+
+        if (hasUpdates) {
+          await setDoc(champDocRef, updates, { merge: true });
+        }
+      } catch (err) {
+        console.warn('Period champion check failed:', err);
+      }
+    };
+    checkChampions();
+  }, [currentUser, isTestingMode]);
 
   // Database Selectors based on Testing Mode
   const activeUsersColl = collection(db, isTestingMode ? 'users_beta' : 'users');
@@ -1034,6 +1115,58 @@ export default function App() {
               <p className="text-red-300 text-xs">{dbError}</p>
             </div>
           )}
+
+          {/* Period Champions */}
+          {currentUser && (periodChampions.daily || periodChampions.weekly || periodChampions.monthly) && (
+            <div className="w-full max-w-2xl mb-8 animate-fade-in">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-px bg-gradient-to-r from-transparent to-yellow-500/60 flex-1 min-w-0" />
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <span className="text-[11px] sm:text-xs font-cyber font-bold text-yellow-400 tracking-widest uppercase whitespace-nowrap">🏅 Last Period Champions</span>
+                </div>
+                <div className="h-px bg-gradient-to-l from-transparent to-yellow-500/60 flex-1 min-w-0" />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {(['daily', 'weekly', 'monthly'] as const).map((period) => {
+                  const champ = periodChampions[period];
+                  const labels = { daily: '⏱️ Daily', weekly: '📅 Weekly', monthly: '🗓️ Monthly' };
+                  const glowColors = { daily: 'rgba(234,179,8,0.08)', weekly: 'rgba(59,130,246,0.08)', monthly: 'rgba(168,85,247,0.08)' };
+                  const borderColors = { daily: 'border-yellow-500/20', weekly: 'border-blue-500/20', monthly: 'border-purple-500/20' };
+                  const textColors = { daily: 'text-yellow-400', weekly: 'text-blue-400', monthly: 'text-purple-400' };
+                  return (
+                    <div key={period}
+                      className={`glass-dark border ${borderColors[period]} rounded-xl p-3 text-center transition-all hover:scale-[1.02]`}
+                      style={{ boxShadow: `0 0 30px ${glowColors[period]}` }}>
+                      <p className={`text-[9px] font-cyber font-bold uppercase tracking-wider ${textColors[period]} mb-2`}>
+                        {labels[period]}
+                      </p>
+                      {champ ? (
+                        <>
+                          <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full overflow-hidden border-2 ${borderColors[period]} mx-auto mb-2 ring-2 ring-yellow-500/20`}>
+                            {champ.playerAvatar ? (
+                              <img src={champ.playerAvatar} alt={champ.playerName} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center text-sm font-bold text-white">
+                                {champ.playerName.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <p className={`text-xs sm:text-sm font-cyber font-bold ${textColors[period]} truncate`}>{champ.playerName}</p>
+                          <p className="text-[9px] text-gray-500 mt-0.5">{champ.wins} wins</p>
+                          <p className="text-[8px] text-gray-600 mt-0.5 italic">{champ.periodLabel}</p>
+                        </>
+                      ) : (
+                        <div className="py-4">
+                          <p className="text-[9px] text-gray-600 italic">No champion yet</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
 
           {/* Global Leaderboard (Moved to Top) */}
           {currentUser && !dbError && (() => {
