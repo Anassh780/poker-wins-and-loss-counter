@@ -75,8 +75,12 @@ const getCutoff = (range: TimeRange): number => {
       return lastMonday.getTime();
     }
     case '30d': {
-      // Calendar month: start of the current month
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      // Calendar month: 1st of the current month at 5:00 AM
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 5, 0, 0, 0);
+      // If it's the 1st but before 5 AM, the last reset was the previous month's 1st at 5 AM
+      if (now.getTime() < monthStart.getTime()) {
+        monthStart.setMonth(monthStart.getMonth() - 1);
+      }
       return monthStart.getTime();
     }
     case 'all':
@@ -110,8 +114,12 @@ export const getNextResetInfo = (range: TimeRange): { nextReset: Date; label: st
       return { nextReset: nextMonday, label: 'Resets Mon at 5 AM' };
     }
     case '30d': {
-      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
-      return { nextReset: nextMonth, label: `Resets ${nextMonth.toLocaleString('default', { month: 'long' })} 1st` };
+      const monthReset = new Date(now.getFullYear(), now.getMonth(), 1, 5, 0, 0, 0);
+      // If we are past the 1st at 5 AM, the next reset is the 1st of next month at 5 AM
+      if (now.getTime() >= monthReset.getTime()) {
+        monthReset.setMonth(monthReset.getMonth() + 1);
+      }
+      return { nextReset: monthReset, label: `Resets ${monthReset.toLocaleString('default', { month: 'long' })} 1st at 5 AM` };
     }
     case 'all':
       return null;

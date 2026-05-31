@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import { AVATARS, AVATAR_CATEGORIES } from '../data/avatars';
 import { getUnlockedAchievements, ACHIEVEMENTS } from '../data/achievements';
 import { RecoveryPanel } from './RecoveryPanel';
 import { AdminManagement } from './AdminManagement';
-import { uploadAvatar } from '../lib/firebase';
+import { uploadAvatar, db } from '../lib/firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import type { AdminPermissions } from './AdminManagement';
-import { VotersList } from './VotersList';
 
 import type { Player } from '../types';
 
@@ -51,6 +51,14 @@ export const ProfileView = ({
   const [selectedCategory, setSelectedCategory] = useState(AVATAR_CATEGORIES[0]);
   const [newBetaEmail, setNewBetaEmail] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [receivedVotes, setReceivedVotes] = useState<{
+    id: string;
+    voterName: string;
+    voterAvatar: string;
+    voteType: 'like' | 'dislike';
+    timestamp: number;
+  }[]>([]);
+  const [loadingVotes, setLoadingVotes] = useState(true);
 
   const handleCustomUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -76,6 +84,31 @@ export const ProfileView = ({
   const gp = wins + losses;
   const winRate = gp > 0 ? ((wins / gp) * 100).toFixed(1) : '0';
   const unlocked = getUnlockedAchievements(wins, losses);
+
+  useEffect(() => {
+    const targetId = myStats?.id || user.uid;
+    const votesCollName = isTestingMode ? 'votes_beta' : 'votes';
+    const q = query(
+      collection(db, votesCollName),
+      where('targetPlayerId', '==', targetId)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const list: any[] = [];
+      snap.forEach((docSnap) => {
+        list.push(docSnap.data());
+      });
+      // Sort by timestamp descending
+      list.sort((a, b) => b.timestamp - a.timestamp);
+      setReceivedVotes(list);
+      setLoadingVotes(false);
+    }, (err) => {
+      console.warn("Failed to load received votes:", err);
+      setLoadingVotes(false);
+    });
+
+    return () => unsub();
+  }, [user.uid, myStats?.id, isTestingMode]);
 
   const handleAddTester = (e: React.FormEvent) => {
     e.preventDefault();
@@ -336,7 +369,46 @@ export const ProfileView = ({
                       </div>
                     )}
 
-                    <VotersList playerId={myStats?.id} isTestingMode={isTestingMode} />
+                    {/* Peer Votes History Details */}
+                    <div className="mt-6 border-t border-white/5 pt-4">
+                      <h4 className="text-xs font-cyber font-bold uppercase text-purple-300 mb-3 tracking-wider">
+                        Peer Votes Breakdown ({receivedVotes.length})
+                      </h4>
+                      {loadingVotes ? (
+                        <p className="text-[10px] text-gray-500 font-cyber animate-pulse">Loading voters detail...</p>
+                      ) : receivedVotes.length === 0 ? (
+                        <p className="text-[10px] text-gray-500 italic">No votes received yet. Get certified by performing in active games!</p>
+                      ) : (
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                          {receivedVotes.map((vote) => (
+                            <div key={vote.id} className="flex items-center justify-between bg-black/35 border border-white/5 rounded-xl p-2.5 hover:border-white/10 transition-all">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-7 h-7 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
+                                  {vote.voterAvatar ? (
+                                    <img src={vote.voterAvatar} alt={vote.voterName} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                      {vote.voterName.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-white truncate">{vote.voterName}</p>
+                                  <p className="text-[8px] text-gray-500">{new Date(vote.timestamp).toLocaleString()}</p>
+                                </div>
+                              </div>
+                              <span className={`text-[10px] font-cyber font-bold px-2 py-0.5 rounded-full ${
+                                vote.voteType === 'like'
+                                  ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                                  : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                              }`}>
+                                {vote.voteType === 'like' ? '👍 LIKE' : '👎 DISLIKE'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
