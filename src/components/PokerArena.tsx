@@ -23,6 +23,10 @@ interface ArenaRoom {
   currentTurnId?: string;
   gameStarted?: boolean;
   leadSuit?: Suit | '';
+  winnerId?: string;
+  winnerName?: string;
+  winnerAvatar?: string;
+  endedReason?: string;
 }
 
 interface PokerArenaProps {
@@ -33,6 +37,7 @@ interface PokerArenaProps {
 
 type BotLevel = 'rookie' | 'shark' | 'legend';
 type HandStyle = 'readable' | 'classic';
+type CardGroupMode = 'suit' | 'rank';
 
 interface PlayedCard {
   playerId: string;
@@ -202,6 +207,14 @@ function getTotalHandCards(hands: Record<string, CardData[]>): number {
   return Object.values(hands).reduce((total, cards) => total + cards.length, 0);
 }
 
+function compareCardsBySuit(a: CardData, b: CardData): number {
+  return SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit) || RANK_VALUE[b.rank] - RANK_VALUE[a.rank];
+}
+
+function compareCardsByRank(a: CardData, b: CardData): number {
+  return RANK_VALUE[b.rank] - RANK_VALUE[a.rank] || SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit);
+}
+
 const ARENA_COLL = 'arena_rooms';
 const CARD_SPACING_MIN = 12;
 const CARD_SPACING_MAX = 42;
@@ -242,17 +255,24 @@ function getCardLabel(card: CardData): string {
   return `${card.rank}${card.suit}`;
 }
 
-function getPlayedCardKey(playerId: string, card: CardData): string {
-  return `${playerId}-${getCardKey(card)}`;
-}
-
 function getRemainingCards(
   cards: CardData[],
   playerId: string,
   playedCards: PlayedCard[] = [],
 ): CardData[] {
-  const played = new Set(playedCards.map(play => getPlayedCardKey(play.playerId, play.card)));
-  return cards.filter(card => !played.has(getPlayedCardKey(playerId, card)));
+  const playedCounts = playedCards.reduce<Record<string, number>>((counts, play) => {
+    if (play.playerId !== playerId) return counts;
+    const key = getCardKey(play.card);
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+
+  return cards.filter(card => {
+    const key = getCardKey(card);
+    if (!playedCounts[key]) return true;
+    playedCounts[key] -= 1;
+    return false;
+  });
 }
 
 function getStartingPlayerId(players: ArenaPlayer[], hands: Record<string, CardData[]>): string {
@@ -654,6 +674,8 @@ const FanHand: FC<{
   selectedCardKey?: string | null;
   canInteract?: boolean;
   onCardTap?: (card: CardData) => void;
+  dragEnabled?: boolean;
+  onReorderCards?: (fromIndex: number, toIndex: number) => void;
 }> = ({
   cards,
   faceDown,
@@ -664,7 +686,10 @@ const FanHand: FC<{
   selectedCardKey,
   canInteract = false,
   onCardTap,
+  dragEnabled = false,
+  onReorderCards,
 }) => {
+  const dragIndexRef = useRef<number | null>(null);
   if (cards.length === 0) return null;
   const n = cards.length;
 
@@ -716,8 +741,34 @@ const FanHand: FC<{
         const fanVars = isClassicHold
           ? ({ '--fan-rot': `${tilt}deg`, '--fan-y': `${fanY}px` } as React.CSSProperties)
           : {};
+        const canDragCard = dragEnabled && isMe && !faceDown && canInteract;
         return (
-          <div key={cardKey} style={{
+          <div
+            key={`${cardKey}-${i}`}
+            draggable={canDragCard}
+            onDragStart={(event) => {
+              if (!canDragCard) return;
+              dragIndexRef.current = i;
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', String(i));
+            }}
+            onDragOver={(event) => {
+              if (!canDragCard) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(event) => {
+              if (!canDragCard) return;
+              event.preventDefault();
+              const rawIndex = event.dataTransfer.getData('text/plain');
+              const fromIndex = rawIndex === '' ? dragIndexRef.current : Number(rawIndex);
+              if (typeof fromIndex === 'number' && Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex !== i) {
+                onReorderCards?.(fromIndex, i);
+              }
+              dragIndexRef.current = null;
+            }}
+            onDragEnd={() => { dragIndexRef.current = null; }}
+            style={{
             position: 'absolute',
             left: i * step,
             top: isClassicHold ? 8 : isSelected ? 0 : 18,
@@ -728,7 +779,7 @@ const FanHand: FC<{
               ? `classicFanIn 0.52s cubic-bezier(.2,.9,.25,1.15) ${i * 0.035}s both`
               : `dealIn 0.3s ease-out ${i * 0.05}s both`,
             transition: 'top 140ms ease, filter 140ms ease, transform 140ms ease',
-            cursor: canInteract ? 'pointer' : 'default',
+            cursor: canDragCard ? 'grab' : canInteract ? 'pointer' : 'default',
             filter: isSelected ? 'drop-shadow(0 0 14px rgba(74,222,128,0.75))' : undefined,
             ...fanVars,
           }}>
@@ -824,10 +875,12 @@ const PlayerSeat: FC<{
   selectedCardKey?: string | null;
   isMyTurn?: boolean;
   onCardTap?: (card: CardData) => void;
+  onReorderCards?: (fromIndex: number, toIndex: number) => void;
+  onGroupCards?: (mode: CardGroupMode) => void;
   onShowCardsPublicly?: () => void;
   onPackCards?: () => void;
   isThinking?: boolean;
-}> = ({ player, cards, isMe, revealed, onReveal, visibleCount, handSpacing, cardSignScale, handStyle, cardProfileGap, wonCards = [], isPubliclyRevealed = false, isPacked = false, selectedCardKey, isMyTurn, onCardTap, onShowCardsPublicly, onPackCards, isThinking }) => {
+}> = ({ player, cards, isMe, revealed, onReveal, visibleCount, handSpacing, cardSignScale, handStyle, cardProfileGap, wonCards = [], isPubliclyRevealed = false, isPacked = false, selectedCardKey, isMyTurn, onCardTap, onReorderCards, onGroupCards, onShowCardsPublicly, onPackCards, isThinking }) => {
   const [showCards, setShowCards] = useState(false);
   const dealtCards = cards.slice(0, visibleCount);
   const isBot = player.isBot;
@@ -916,6 +969,8 @@ const PlayerSeat: FC<{
             selectedCardKey={selectedCardKey}
             canInteract={showCards}
             onCardTap={onCardTap}
+            dragEnabled={Boolean(onReorderCards)}
+            onReorderCards={onReorderCards}
           />
         )}
         {NameTag}
@@ -955,6 +1010,42 @@ const PlayerSeat: FC<{
               }}
             >
               Pack
+            </button>
+          </div>
+        )}
+        {dealtCards.length > 1 && showCards && !isPacked && onGroupCards && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 5 }}>
+            <button
+              type="button"
+              onClick={() => onGroupCards('suit')}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 7,
+                background: 'rgba(74,222,128,0.13)',
+                color: '#bbf7d0',
+                border: '1px solid rgba(74,222,128,0.28)',
+                fontWeight: 900,
+                fontSize: 8,
+                cursor: 'pointer',
+              }}
+            >
+              Group Suit
+            </button>
+            <button
+              type="button"
+              onClick={() => onGroupCards('rank')}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 7,
+                background: 'rgba(96,165,250,0.13)',
+                color: '#bfdbfe',
+                border: '1px solid rgba(96,165,250,0.28)',
+                fontWeight: 900,
+                fontSize: 8,
+                cursor: 'pointer',
+              }}
+            >
+              Group Rank
             </button>
           </div>
         )}
@@ -1018,16 +1109,23 @@ const PokerTable: FC<{
   const [isCompactLayout, setIsCompactLayout] = useState(() => (
     typeof window !== 'undefined' ? window.innerWidth < 980 : false
   ));
+  const [isPortraitLayout, setIsPortraitLayout] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth <= 760 && window.innerHeight >= window.innerWidth : false
+  ));
   const [controlsOpen, setControlsOpen] = useState(false);
   const [selectedCardKey, setSelectedCardKey] = useState<string | null>(null);
   const [playMessage, setPlayMessage] = useState('');
+  const [cardOrder, setCardOrder] = useState<Record<string, string[]>>({});
   const botPlayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const botTurnKeyRef = useRef('');
   const trickResolveKeyRef = useRef('');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const handleResize = () => setIsCompactLayout(window.innerWidth < 980);
+    const handleResize = () => {
+      setIsCompactLayout(window.innerWidth < 980);
+      setIsPortraitLayout(window.innerWidth <= 760 && window.innerHeight >= window.innerWidth);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -1038,6 +1136,7 @@ const PokerTable: FC<{
       setVisibleCounts({}); setDeckLeft(52);
       setThinkingBots(new Set());
       setSelectedCardKey(null); setPlayMessage('');
+      setCardOrder({});
       if (botPlayRef.current) clearTimeout(botPlayRef.current);
       botTurnKeyRef.current = '';
       trickResolveKeyRef.current = '';
@@ -1075,7 +1174,8 @@ const PokerTable: FC<{
     });
   };
 
-  const allDealt = totalDealtCards > 0 && ordered.every(p => (visibleCounts[p.id] || 0) >= (room.hands[p.id] || []).length);
+  const allDealt = Boolean(room.gameStarted) ||
+    (totalDealtCards > 0 && ordered.every(p => (visibleCounts[p.id] || 0) >= (room.hands[p.id] || []).length));
   const playedCards = room.playedCards || [];
   const discardPile = room.discardPile || [];
   const capturedPiles = room.capturedPiles || {};
@@ -1083,6 +1183,7 @@ const PokerTable: FC<{
   const packedPlayerIds = room.packedPlayerIds || [];
   const currentTurnId = room.currentTurnId || '';
   const currentTurnPlayer = room.players.find(player => player.id === currentTurnId) || null;
+  const winnerPlayer = room.winnerId ? room.players.find(player => player.id === room.winnerId) || null : null;
   const isMyTurn = currentTurnId === myId;
   const leadSuit = room.leadSuit || playedCards[0]?.card.suit || '';
   const usedCardCount = playedCards.length + discardPile.length;
@@ -1090,7 +1191,7 @@ const PokerTable: FC<{
   const activePlayersWithCards = activePlayers.filter(player =>
     getRemainingCards(room.hands[player.id] || [], player.id, [...discardPile, ...playedCards]).length > 0
   );
-  const roundComplete = allDealt && (usedCardCount >= totalDealtCards || activePlayersWithCards.length <= 1);
+  const roundComplete = Boolean(room.winnerId) || (allDealt && (usedCardCount >= totalDealtCards || activePlayersWithCards.length <= 1));
   const cutPlayedOnTable = playedCards.some(play => play.isCut);
   const activeTrickPlayers = activePlayers.filter(player =>
     playedCards.some(play => play.playerId === player.id) ||
@@ -1112,8 +1213,43 @@ const PokerTable: FC<{
     [...discardPile, ...playedCards],
   );
 
+  const getOrderedCards = (playerId: string, cards: CardData[]) => {
+    const savedOrder = cardOrder[playerId] || [];
+    if (savedOrder.length === 0) return cards;
+
+    const originalIndex = new Map(cards.map((card, index) => [`${getCardKey(card)}-${index}`, index]));
+    const nextCards = [...cards];
+    return nextCards.sort((a, b) => {
+      const aOrder = savedOrder.indexOf(getCardKey(a));
+      const bOrder = savedOrder.indexOf(getCardKey(b));
+      if (aOrder >= 0 && bOrder >= 0) return aOrder - bOrder;
+      if (aOrder >= 0) return -1;
+      if (bOrder >= 0) return 1;
+      return (originalIndex.get(`${getCardKey(a)}-${cards.indexOf(a)}`) || 0) - (originalIndex.get(`${getCardKey(b)}-${cards.indexOf(b)}`) || 0);
+    });
+  };
+
+  const handleReorderMyCards = (fromIndex: number, toIndex: number) => {
+    const visibleCards = getOrderedCards(myId, getVisibleCards(myId));
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= visibleCards.length || toIndex >= visibleCards.length) return;
+
+    const keys = visibleCards.map(getCardKey);
+    const [moved] = keys.splice(fromIndex, 1);
+    keys.splice(toIndex, 0, moved);
+    setCardOrder(prev => ({ ...prev, [myId]: keys }));
+    setSelectedCardKey(null);
+  };
+
+  const handleGroupMyCards = (mode: CardGroupMode) => {
+    const visibleCards = getVisibleCards(myId);
+    const sorted = [...visibleCards].sort(mode === 'suit' ? compareCardsBySuit : compareCardsByRank);
+    setCardOrder(prev => ({ ...prev, [myId]: sorted.map(getCardKey) }));
+    setSelectedCardKey(null);
+  };
+
   const playCardForPlayer = async (player: ArenaPlayer, card: CardData) => {
     if (!allDealt) return;
+    if (room.winnerId) return;
     if (packedPlayerIds.includes(player.id)) return;
     if (currentTurnId && player.id !== currentTurnId) return;
 
@@ -1200,15 +1336,34 @@ const PokerTable: FC<{
 
   const handlePackCards = async () => {
     if (packedPlayerIds.includes(myId)) return;
+    if (room.winnerId) return;
 
     const nextPackedPlayerIds = [...packedPlayerIds, myId];
     const nextPublicRevealedBy = publicRevealedBy.includes(myId)
       ? publicRevealedBy
       : [...publicRevealedBy, myId];
+    const remainingPlayers = room.players.filter(player => !nextPackedPlayerIds.includes(player.id));
     const updates: Partial<ArenaRoom> = {
       packedPlayerIds: nextPackedPlayerIds,
       publicRevealedBy: nextPublicRevealedBy,
     };
+
+    if (remainingPlayers.length === 1) {
+      const winner = remainingPlayers[0];
+      setPlayMessage(`${winner.name} wins. Last opponent packed.`);
+      await onRoomUpdate({
+        ...updates,
+        status: 'done',
+        winnerId: winner.id,
+        winnerName: winner.name,
+        winnerAvatar: winner.avatar,
+        endedReason: 'Opponent packed',
+        currentTurnId: '',
+        playedCards: [],
+        leadSuit: '',
+      });
+      return;
+    }
 
     if (currentTurnId === myId) {
       const nextTurnId = getNextClockwisePlayerId(
@@ -1237,7 +1392,7 @@ const PokerTable: FC<{
 
     const startingPlayer = room.players.find(player => player.id === startingPlayerId);
     setPlayMessage(startingPlayer ? `${startingPlayer.name} starts with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}` : '');
-    void onRoomUpdate({ currentTurnId: startingPlayerId, gameStarted: true, playedCards: [], discardPile: [], leadSuit: '' });
+    void onRoomUpdate({ currentTurnId: startingPlayerId, gameStarted: true, playedCards: [], discardPile: [], leadSuit: '', winnerId: '', winnerName: '', winnerAvatar: '', endedReason: '' });
   }, [allDealt, room.currentTurnId, room.gameStarted, room.roomId]);
 
   useEffect(() => {
@@ -1261,32 +1416,53 @@ const PokerTable: FC<{
         capturedBy: winner.playerId,
         capturedAt: Date.now(),
       }));
+      const cutReturnsToWinner = cutPlays.length > 0;
       const nextDiscardPile = [...discardPile, ...capturedCards];
+      const nextHands = cutReturnsToWinner
+        ? {
+            ...room.hands,
+            [winner.playerId]: [...(room.hands[winner.playerId] || []), ...capturedCards.map(play => play.card)],
+          }
+        : room.hands;
       const nextCapturedPiles = {
         ...capturedPiles,
         [winner.playerId]: [...(capturedPiles[winner.playerId] || []), ...capturedCards],
       };
-      const isGameDone = nextDiscardPile.length >= totalDealtCards;
-      const winnerCanLead = getRemainingCards(room.hands[winner.playerId] || [], winner.playerId, nextDiscardPile).length > 0;
+      const nextTotalCards = getTotalHandCards(nextHands);
+      const remainingActivePlayers = room.players.filter(player =>
+        !packedPlayerIds.includes(player.id) &&
+        getRemainingCards(nextHands[player.id] || [], player.id, nextDiscardPile).length > 0
+      );
+      const isGameDone = !cutReturnsToWinner && (nextDiscardPile.length >= nextTotalCards || remainingActivePlayers.length <= 1);
+      const autoWinner = isGameDone && remainingActivePlayers.length === 1 ? remainingActivePlayers[0] : null;
+      const winnerCanLead = getRemainingCards(nextHands[winner.playerId] || [], winner.playerId, nextDiscardPile).length > 0;
       const nextLeadPlayerId = isGameDone
         ? ''
         : winnerCanLead
           ? winner.playerId
-          : getNextClockwisePlayerId(room.players, room.hands, nextDiscardPile, winner.playerId, packedPlayerIds);
+          : getNextClockwisePlayerId(room.players, nextHands, nextDiscardPile, winner.playerId, packedPlayerIds);
       const nextLeadPlayer = room.players.find(candidate => candidate.id === nextLeadPlayerId);
 
       void onRoomUpdate({
         playedCards: [],
+        hands: nextHands,
         discardPile: nextDiscardPile,
         capturedPiles: nextCapturedPiles,
         currentTurnId: nextLeadPlayerId,
         leadSuit: '',
+        ...(autoWinner ? {
+          status: 'done' as const,
+          winnerId: autoWinner.id,
+          winnerName: autoWinner.name,
+          winnerAvatar: autoWinner.avatar,
+          endedReason: 'Last player with cards',
+        } : {}),
       });
       setPlayMessage(isGameDone
-        ? 'All cards played'
+        ? autoWinner ? `${autoWinner.name} wins the round` : 'All cards played'
         : cutPlays.length > 0
           ? winnerCanLead
-            ? `${winner.playerName} received the cut and leads next`
+            ? `${winner.playerName} received the cut cards and leads next`
             : `${winner.playerName} received the cut. ${nextLeadPlayer?.name || 'Next player'} leads next`
           : `${nextLeadPlayer?.name || winner.playerName} leads next`);
     }, TRICK_CLEAR_DELAY_MS);
@@ -1329,6 +1505,419 @@ const PokerTable: FC<{
       if (botPlayRef.current) clearTimeout(botPlayRef.current);
     };
   }, [allDealt, currentTurnId, playedCards.length, discardPile.length, leadSuit, room.roomId, roundComplete, currentTrickComplete]);
+
+  const renderPlayerSeat = (player: ArenaPlayer) => {
+    const visibleCards = getOrderedCards(player.id, getVisibleCards(player.id));
+
+    return (
+      <PlayerSeat
+        player={player}
+        cards={visibleCards}
+        isMe={player.id === myId}
+        revealed={room.revealedBy.includes(player.id)}
+        onReveal={onReveal}
+        visibleCount={allDealt ? visibleCards.length : visibleCounts[player.id] || 0}
+        handSpacing={handSpacing}
+        cardSignScale={cardSignScale}
+        handStyle={handStyle}
+        cardProfileGap={cardProfileGap}
+        wonCards={capturedPiles[player.id] || []}
+        isPubliclyRevealed={publicRevealedBy.includes(player.id)}
+        isPacked={packedPlayerIds.includes(player.id)}
+        selectedCardKey={player.id === myId ? selectedCardKey : null}
+        isMyTurn={player.id === myId && isMyTurn}
+        onCardTap={player.id === myId ? handleMyCardTap : undefined}
+        onReorderCards={player.id === myId ? handleReorderMyCards : undefined}
+        onGroupCards={player.id === myId ? handleGroupMyCards : undefined}
+        onShowCardsPublicly={player.id === myId ? handleShowCardsPublicly : undefined}
+        onPackCards={player.id === myId ? handlePackCards : undefined}
+        isThinking={player.isBot ? thinkingBots.has(player.id) : false}
+      />
+    );
+  };
+
+  const renderWinnerCelebration = () => {
+    const winner = winnerPlayer || (room.winnerId ? {
+      id: room.winnerId,
+      name: room.winnerName || 'Winner',
+      avatar: room.winnerAvatar || '',
+    } as ArenaPlayer : null);
+    if (!winner) return null;
+
+    return (
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 120,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+        background: 'radial-gradient(circle at 50% 45%, rgba(22,163,74,0.16), rgba(0,0,0,0.22) 45%, transparent 70%)',
+      }}>
+        <div style={{
+          position: 'relative',
+          width: 'min(86vw, 360px)',
+          borderRadius: 18,
+          padding: 18,
+          background: 'linear-gradient(180deg,rgba(2,18,8,0.96),rgba(0,0,0,0.9))',
+          border: '1px solid rgba(250,204,21,0.5)',
+          boxShadow: '0 24px 70px rgba(0,0,0,0.65), 0 0 40px rgba(250,204,21,0.22)',
+          textAlign: 'center',
+          animation: 'winnerPop 0.55s cubic-bezier(.18,.9,.25,1.2) both',
+        }}>
+          {['CHEERS', 'WINNER', 'GG'].map((label, index) => (
+            <span key={label} style={{
+              position: 'absolute',
+              left: `${18 + index * 28}%`,
+              top: -18 - index * 6,
+              color: index === 1 ? '#facc15' : '#4ade80',
+              fontSize: 10,
+              fontWeight: 900,
+              letterSpacing: 1.5,
+              animation: `cheerFloat ${1.1 + index * 0.12}s ease-in-out ${index * 0.08}s infinite alternate`,
+            }}>
+              {label}
+            </span>
+          ))}
+          <div style={{
+            width: 76,
+            height: 76,
+            borderRadius: '50%',
+            margin: '0 auto 10px',
+            border: '3px solid #facc15',
+            background: 'linear-gradient(135deg,#16a34a,#7c3aed)',
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#fff',
+            fontWeight: 900,
+            fontSize: 28,
+            boxShadow: '0 0 28px rgba(250,204,21,0.42)',
+          }}>
+            {winner.avatar ? <img src={winner.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : winner.name[0]?.toUpperCase()}
+          </div>
+          <p style={{ margin: 0, color: '#facc15', fontSize: 11, fontWeight: 900, letterSpacing: 2 }}>WINNER</p>
+          <h2 style={{ margin: '4px 0 6px', color: '#f8fafc', fontSize: 22, lineHeight: 1.05 }}>{winner.name}</h2>
+          <p style={{ margin: 0, color: '#9ca3af', fontSize: 12, fontWeight: 700 }}>{room.endedReason || 'Round complete'}</p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPortraitOpponentSeat = (player: ArenaPlayer) => {
+    const visibleCards = getOrderedCards(player.id, getVisibleCards(player.id));
+    const previewCards = visibleCards.slice(0, Math.min(6, visibleCards.length));
+    const isBot = player.isBot;
+    const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
+    const isPacked = packedPlayerIds.includes(player.id);
+    const isPublic = publicRevealedBy.includes(player.id);
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, width: 112 }}>
+        {previewCards.length > 0 && (
+          <div style={{ width: 112, overflow: 'hidden', display: 'flex', justifyContent: 'center' }}>
+            <FanHand
+              cards={previewCards}
+              faceDown={!isPublic && !isPacked}
+              isMe={false}
+              cardSignScale={cardSignScale}
+              handStyle={handStyle}
+            />
+          </div>
+        )}
+        <div style={{
+          width: 30,
+          height: 30,
+          borderRadius: '50%',
+          overflow: 'hidden',
+          border: isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.35)',
+          background: isBot ? 'linear-gradient(135deg,#1d4ed8,#7c3aed)' : 'linear-gradient(135deg,#16a34a,#7c3aed)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fff',
+          fontWeight: 900,
+          fontSize: isBot ? 15 : 12,
+        }}>
+          {!isBot && player.avatar
+            ? <img src={player.avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            : isBot ? BOT_CONFIGS[player.botLevel || 'rookie'].emoji
+            : player.name[0]?.toUpperCase()}
+        </div>
+        <p style={{
+          margin: 0,
+          width: '100%',
+          color: isBot ? levelColor : '#f8fafc',
+          fontWeight: 900,
+          fontSize: 9,
+          textAlign: 'center',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          textShadow: '0 2px 6px rgba(0,0,0,0.85)',
+        }}>
+          {player.name}
+        </p>
+        <span style={{ color: player.id === currentTurnId ? '#facc15' : '#9ca3af', fontSize: 8, fontWeight: 900 }}>
+          {isPacked ? 'PACKED' : player.id === currentTurnId ? 'TURN' : `${visibleCards.length} cards`}
+        </span>
+      </div>
+    );
+  };
+
+  if (isPortraitLayout) {
+    const myPlayer = ordered.find(player => player.id === myId);
+    const opponentPlayers = ordered.filter(player => player.id !== myId);
+
+    return (
+      <div style={{
+        height: '100%',
+        overflow: 'hidden',
+        background: '#041105',
+        position: 'relative',
+        display: 'grid',
+        gridTemplateRows: 'auto minmax(240px, 1fr) auto',
+      }}>
+        <button
+          type="button"
+          onClick={() => setControlsOpen(true)}
+          style={{
+            position: 'absolute',
+            top: 150,
+            right: 14,
+            zIndex: 80,
+            padding: '8px 11px',
+            borderRadius: 11,
+            border: '1px solid rgba(74,222,128,0.28)',
+            background: 'rgba(0,0,0,0.74)',
+            color: '#bbf7d0',
+            fontWeight: 900,
+            fontSize: 11,
+            cursor: 'pointer',
+          }}
+        >
+          Controls
+        </button>
+
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          padding: '10px 68px 8px 10px',
+          borderBottom: '1px solid rgba(74,222,128,0.12)',
+          background: 'linear-gradient(180deg,rgba(0,0,0,0.6),rgba(2,19,8,0.82))',
+        }}>
+          {opponentPlayers.map(player => (
+            <div key={player.id} style={{
+              minWidth: 126,
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '4px 6px',
+              borderRadius: 12,
+              border: player.id === currentTurnId ? '1px solid rgba(250,204,21,0.45)' : '1px solid rgba(255,255,255,0.08)',
+              background: player.id === currentTurnId ? 'rgba(250,204,21,0.08)' : 'rgba(255,255,255,0.04)',
+            }}>
+              {renderPortraitOpponentSeat(player)}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ position: 'relative', minHeight: 0, overflow: 'hidden', padding: 10 }}>
+          <div style={{
+            position: 'absolute',
+            inset: 10,
+            borderRadius: 28,
+            background: 'linear-gradient(160deg,#a0714f 0%,#6b3f1f 42%,#8B5E3C 70%,#5C3A1E 100%)',
+            boxShadow: '0 10px 34px rgba(0,0,0,0.75), inset 0 2px 4px rgba(255,220,150,0.15)',
+          }} />
+          <div style={{
+            position: 'absolute',
+            inset: 26,
+            borderRadius: 22,
+            background: 'radial-gradient(ellipse at 50% 40%, #1e7a35 0%, #155c28 52%, #0e4a1e 100%)',
+            boxShadow: 'inset 0 6px 26px rgba(0,0,0,0.48), inset 0 -4px 18px rgba(0,0,0,0.28)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              opacity: 0.04,
+              backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)',
+              backgroundSize: '6px 6px',
+            }} />
+          </div>
+
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 20,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+            width: 'min(82vw, 300px)',
+          }}>
+            <DeckPile count={deckLeft} isShuffling={isShuffling} />
+            {isShuffling && (
+              <div style={{ background: 'rgba(0,0,0,0.9)', borderRadius: 8, padding: '4px 10px', color: '#4ade80', fontWeight: 900, fontSize: 11, letterSpacing: 1.5, animation: 'pulse 0.8s infinite' }}>
+                SHUFFLING...
+              </div>
+            )}
+            {allDealt && playedCards.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 78, marginTop: 2 }}>
+                {playedCards.map((play, index, list) => (
+                  <div key={`${play.playerId}-${play.order}`} style={{
+                    position: 'relative',
+                    marginLeft: index === 0 ? 0 : -24,
+                    transform: `rotate(${(index - (list.length - 1) / 2) * 6}deg)`,
+                    zIndex: index + 1,
+                  }}>
+                    <PlayingCard card={play.card} small symbolScale={cardSignScale} />
+                    {play.isCut && (
+                      <div style={{
+                        position: 'absolute',
+                        left: '50%',
+                        bottom: -13,
+                        transform: 'translateX(-50%)',
+                        borderRadius: 999,
+                        padding: '1px 5px',
+                        background: 'rgba(250,204,21,0.95)',
+                        color: '#111827',
+                        fontSize: 8,
+                        fontWeight: 900,
+                      }}>
+                        CUT
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {allDealt && (
+              <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 10, padding: '6px 10px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 11, maxWidth: 250, textAlign: 'center' }}>
+                {roundComplete
+                  ? winnerPlayer ? `${winnerPlayer.name} wins` : 'Round complete'
+                  : currentTrickComplete
+                    ? 'Checking trick winner...'
+                    : isMyTurn
+                      ? 'Your turn: tap a card twice'
+                      : currentTurnPlayer
+                        ? `${currentTurnPlayer.name}'s turn`
+                        : `Start with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}`}
+                {playMessage && <div style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, marginTop: 2 }}>{playMessage}</div>}
+              </div>
+            )}
+            {allDealt && discardPile.length > 0 && (
+              <div style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 8, padding: '4px 9px', color: '#9ca3af', fontWeight: 800, fontSize: 9 }}>
+                Won decks: {discardPile.length} cards
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{
+          minHeight: 178,
+          padding: '4px 0 max(10px, env(safe-area-inset-bottom))',
+          borderTop: '1px solid rgba(74,222,128,0.14)',
+          background: 'linear-gradient(180deg,rgba(2,19,8,0.94),rgba(0,0,0,0.82))',
+          overflowX: 'hidden',
+          overflowY: 'auto',
+        }}>
+          {myPlayer && renderPlayerSeat(myPlayer)}
+        </div>
+
+        {controlsOpen && (
+          <div style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            bottom: 8,
+            width: 'min(330px, calc(100vw - 16px))',
+            zIndex: 140,
+            borderRadius: 16,
+            border: '1px solid rgba(74,222,128,0.22)',
+            background: 'linear-gradient(180deg,rgba(0,0,0,0.92),rgba(2,19,8,0.97))',
+            padding: 14,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+              <div>
+                <p style={{ color: '#4ade80', fontWeight: 900, letterSpacing: 2.5, fontSize: 11, margin: 0 }}>ARENA CONTROLS</p>
+                <p style={{ color: '#6b7280', fontSize: 10, margin: '4px 0 0' }}>Room {room.roomId}</p>
+              </div>
+              <button type="button" onClick={() => setControlsOpen(false)} style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: '#d1d5db', fontWeight: 900, cursor: 'pointer' }}>
+                X
+              </button>
+            </div>
+
+            <div style={{ background: 'rgba(74,222,128,0.07)', border: '1px solid rgba(74,222,128,0.18)', borderRadius: 14, padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <p style={{ color: '#d1fae5', fontWeight: 900, fontSize: 12, margin: 0 }}>Card spacing</p>
+                <span style={{ color: '#4ade80', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{handSpacing}px</span>
+              </div>
+              <input type="range" min={CARD_SPACING_MIN} max={CARD_SPACING_MAX} step={1} value={handSpacing} onChange={(event) => onHandSpacingChange(clampCardSpacing(Number(event.target.value)))} style={{ width: '100%', accentColor: '#4ade80', marginTop: 10 }} aria-label="Card spacing" />
+            </div>
+
+            <div style={{ background: 'rgba(168,85,247,0.07)', border: '1px solid rgba(168,85,247,0.18)', borderRadius: 14, padding: 12 }}>
+              <p style={{ color: '#ede9fe', fontWeight: 900, fontSize: 12, margin: '0 0 10px' }}>Holding style</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {([{ value: 'readable' as HandStyle, label: 'Readable row' }, { value: 'classic' as HandStyle, label: 'Classic fan' }]).map(option => (
+                  <button key={option.value} type="button" onClick={() => onHandStyleChange(option.value)} style={{
+                    padding: '8px 8px',
+                    borderRadius: 9,
+                    border: `1px solid ${handStyle === option.value ? 'rgba(196,181,253,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                    background: handStyle === option.value ? 'rgba(168,85,247,0.22)' : 'rgba(0,0,0,0.32)',
+                    color: handStyle === option.value ? '#ddd6fe' : '#9ca3af',
+                    fontSize: 11,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                  }}>
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(250,204,21,0.07)', border: '1px solid rgba(250,204,21,0.18)', borderRadius: 14, padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <p style={{ color: '#fef3c7', fontWeight: 900, fontSize: 12, margin: 0 }}>Profile distance</p>
+                <span style={{ color: '#facc15', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{cardProfileGap}px</span>
+              </div>
+              <input type="range" min={CARD_PROFILE_GAP_MIN} max={CARD_PROFILE_GAP_MAX} step={1} value={cardProfileGap} onChange={(event) => onCardProfileGapChange(clampCardProfileGap(Number(event.target.value)))} style={{ width: '100%', accentColor: '#facc15', marginTop: 10 }} aria-label="Card to profile distance" />
+            </div>
+
+            <div style={{ background: 'rgba(14,165,233,0.07)', border: '1px solid rgba(14,165,233,0.18)', borderRadius: 14, padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <p style={{ color: '#dbeafe', fontWeight: 900, fontSize: 12, margin: 0 }}>Card signs</p>
+                <span style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{Math.round(cardSignScale * 100)}%</span>
+              </div>
+              <input type="range" min={CARD_SIGN_SCALE_MIN} max={CARD_SIGN_SCALE_MAX} step={0.05} value={cardSignScale} onChange={(event) => onCardSignScaleChange(clampCardSignScale(Number(event.target.value)))} style={{ width: '100%', accentColor: '#60a5fa', marginTop: 10 }} aria-label="Card sign size" />
+            </div>
+
+            {isHost && allDealt && (
+              <button onClick={onNewGame} style={{ width: '100%', padding: '11px 16px', borderRadius: 12, fontWeight: 900, fontSize: 12, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+                New Deal
+              </button>
+            )}
+            <button onClick={onLeave} style={{ width: '100%', marginTop: 'auto', padding: '11px 14px', borderRadius: 12, fontWeight: 700, fontSize: 12, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
+              Leave
+            </button>
+          </div>
+        )}
+
+        {renderWinnerCelebration()}
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -1464,27 +2053,11 @@ const PokerTable: FC<{
         <div style={{ position: 'absolute', inset: 0, zIndex: 20 }}>
           {ordered.map((player, seatIdx) => (
             <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length) }}>
-              <PlayerSeat
-                player={player} cards={getVisibleCards(player.id)}
-                isMe={player.id === myId} revealed={room.revealedBy.includes(player.id)}
-                onReveal={onReveal} visibleCount={visibleCounts[player.id] || 0}
-                handSpacing={handSpacing}
-                cardSignScale={cardSignScale}
-                handStyle={handStyle}
-                cardProfileGap={cardProfileGap}
-                wonCards={capturedPiles[player.id] || []}
-                isPubliclyRevealed={publicRevealedBy.includes(player.id)}
-                isPacked={packedPlayerIds.includes(player.id)}
-                selectedCardKey={player.id === myId ? selectedCardKey : null}
-                isMyTurn={player.id === myId && isMyTurn}
-                onCardTap={player.id === myId ? handleMyCardTap : undefined}
-                onShowCardsPublicly={player.id === myId ? handleShowCardsPublicly : undefined}
-                onPackCards={player.id === myId ? handlePackCards : undefined}
-                isThinking={player.isBot ? thinkingBots.has(player.id) : false}
-              />
+              {renderPlayerSeat(player)}
             </div>
           ))}
         </div>
+        {renderWinnerCelebration()}
       </div>
 
       {/* Controls panel */}
@@ -1811,7 +2384,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
     const shuffled = shuffleDeck(buildDeck());
     const hands = dealCards(shuffled, r.players.map(p => p.id));
     const remainingDeck = getRemainingDeck(shuffled, r.players.length);
-    const update = { status: 'shuffling' as const, deck: remainingDeck, hands, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, playedCards: [], discardPile: [], capturedPiles: {}, currentTurnId: '', gameStarted: false, leadSuit: '' as const };
+    const update = { status: 'shuffling' as const, deck: remainingDeck, hands, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, playedCards: [], discardPile: [], capturedPiles: {}, currentTurnId: '', gameStarted: false, leadSuit: '' as const, winnerId: '', winnerName: '', winnerAvatar: '', endedReason: '' };
     const ref = doc(db, ARENA_COLL, r.roomId);
     try {
       await updateDoc(ref, update);
