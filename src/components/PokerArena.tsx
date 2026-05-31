@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, type FC } from 'react';
-import { PlayingCard, type CardData, type Suit, type Rank } from './PlayingCard';
+import { PlayingCard, SuitMark, ClassicPips, type CardData, type Suit, type Rank } from './PlayingCard';
 import { db } from '../lib/firebase';
 import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -15,6 +15,14 @@ interface ArenaRoom {
   status: 'waiting' | 'shuffling' | 'reveal' | 'done';
   deck: CardData[]; hands: Record<string, CardData[]>;
   revealedBy: string[]; dealStep: number; createdAt: number;
+  publicRevealedBy?: string[];
+  packedPlayerIds?: string[];
+  playedCards?: PlayedCard[];
+  discardPile?: PlayedCard[];
+  capturedPiles?: Record<string, PlayedCard[]>;
+  currentTurnId?: string;
+  gameStarted?: boolean;
+  leadSuit?: Suit | '';
 }
 
 interface PokerArenaProps {
@@ -24,6 +32,18 @@ interface PokerArenaProps {
 }
 
 type BotLevel = 'rookie' | 'shark' | 'legend';
+type HandStyle = 'readable' | 'classic';
+
+interface PlayedCard {
+  playerId: string;
+  playerName: string;
+  card: CardData;
+  order: number;
+  timestamp: number;
+  isCut?: boolean;
+  capturedBy?: string;
+  capturedAt?: number;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // BOT AI ENGINE
@@ -144,16 +164,185 @@ function shuffleDeck(deck: CardData[]): CardData[] {
   }
   return d;
 }
+function getCardsPerPlayer(cardCount: number, playerCount: number): number {
+  return playerCount > 0 ? Math.floor(cardCount / playerCount) : 0;
+}
+
+function getCardDistribution(cardCount: number, playerCount: number): number[] {
+  if (playerCount <= 0) return [];
+  const base = getCardsPerPlayer(cardCount, playerCount);
+  const extra = cardCount % playerCount;
+  return Array.from({ length: playerCount }, (_, index) => base + (index < extra ? 1 : 0));
+}
+
+function getCardDistributionLabel(cardCount: number, playerCount: number): string {
+  const distribution = getCardDistribution(cardCount, playerCount);
+  if (distribution.length === 0) return '0 cards per player';
+
+  const min = Math.min(...distribution);
+  const max = Math.max(...distribution);
+  return min === max ? `${min} cards per player` : `${min}-${max} cards per player`;
+}
+
 function dealCards(deck: CardData[], ids: string[]): Record<string, CardData[]> {
   const h: Record<string, CardData[]> = {};
   ids.forEach(id => { h[id] = []; });
-  const per = Math.floor(deck.length / ids.length);
-  let idx = 0;
-  for (let c = 0; c < per; c++) for (const id of ids) h[id].push(deck[idx++]);
+  if (ids.length === 0) return h;
+  deck.forEach((card, index) => {
+    h[ids[index % ids.length]].push(card);
+  });
   return h;
 }
 
+function getRemainingDeck(deck: CardData[], playerCount: number): CardData[] {
+  return playerCount > 0 ? [] : deck;
+}
+
+function getTotalHandCards(hands: Record<string, CardData[]>): number {
+  return Object.values(hands).reduce((total, cards) => total + cards.length, 0);
+}
+
 const ARENA_COLL = 'arena_rooms';
+const CARD_SPACING_MIN = 12;
+const CARD_SPACING_MAX = 42;
+const CARD_SPACING_DEFAULT = 24;
+const CARD_SIGN_SCALE_MIN = 0.65;
+const CARD_SIGN_SCALE_MAX = 1.35;
+const CARD_SIGN_SCALE_DEFAULT = 0.82;
+const CARD_PROFILE_GAP_MIN = -18;
+const CARD_PROFILE_GAP_MAX = 36;
+const CARD_PROFILE_GAP_DEFAULT = 0;
+const BOT_CARD_PLAY_DELAY_MS = 650;
+const TRICK_CLEAR_DELAY_MS = 1500;
+
+function clampCardSpacing(value: number): number {
+  if (!Number.isFinite(value)) return CARD_SPACING_DEFAULT;
+  return Math.max(CARD_SPACING_MIN, Math.min(CARD_SPACING_MAX, value));
+}
+
+function clampCardSignScale(value: number): number {
+  if (!Number.isFinite(value)) return CARD_SIGN_SCALE_DEFAULT;
+  return Math.max(CARD_SIGN_SCALE_MIN, Math.min(CARD_SIGN_SCALE_MAX, value));
+}
+
+function clampCardProfileGap(value: number): number {
+  if (!Number.isFinite(value)) return CARD_PROFILE_GAP_DEFAULT;
+  return Math.max(CARD_PROFILE_GAP_MIN, Math.min(CARD_PROFILE_GAP_MAX, value));
+}
+
+function getCardKey(card: CardData): string {
+  return `${card.rank}-${card.suit}`;
+}
+
+function isAceOfSpades(card: CardData): boolean {
+  return card.rank === 'A' && card.suit === SUITS[0];
+}
+
+function getCardLabel(card: CardData): string {
+  return `${card.rank}${card.suit}`;
+}
+
+function getPlayedCardKey(playerId: string, card: CardData): string {
+  return `${playerId}-${getCardKey(card)}`;
+}
+
+function getRemainingCards(
+  cards: CardData[],
+  playerId: string,
+  playedCards: PlayedCard[] = [],
+): CardData[] {
+  const played = new Set(playedCards.map(play => getPlayedCardKey(play.playerId, play.card)));
+  return cards.filter(card => !played.has(getPlayedCardKey(playerId, card)));
+}
+
+function getStartingPlayerId(players: ArenaPlayer[], hands: Record<string, CardData[]>): string {
+  return players.find(player => (hands[player.id] || []).some(isAceOfSpades))?.id || players[0]?.id || '';
+}
+
+function canPlayCard(
+  card: CardData,
+  hand: CardData[],
+  currentTrick: PlayedCard[],
+  discardPile: PlayedCard[],
+  leadSuit: Suit | '',
+): boolean {
+  if (discardPile.length === 0 && currentTrick.length === 0) return isAceOfSpades(card);
+  if (!leadSuit || currentTrick.length === 0) return true;
+
+  const hasLeadSuit = hand.some(handCard => handCard.suit === leadSuit);
+  return !hasLeadSuit || card.suit === leadSuit;
+}
+
+function isCutPlay(
+  card: CardData,
+  hand: CardData[],
+  currentTrick: PlayedCard[],
+  leadSuit: Suit | '',
+): boolean {
+  if (!leadSuit || currentTrick.length === 0) return false;
+  const hasLeadSuit = hand.some(handCard => handCard.suit === leadSuit);
+  return !hasLeadSuit && card.suit !== leadSuit;
+}
+
+function getCutPlays(currentTrick: PlayedCard[], leadSuit: Suit | ''): PlayedCard[] {
+  if (!leadSuit) return [];
+  return currentTrick.filter(play => play.card.suit !== leadSuit);
+}
+
+function getRandomCard(cards: CardData[]): CardData | undefined {
+  if (cards.length === 0) return undefined;
+  return cards[Math.floor(Math.random() * cards.length)];
+}
+
+function getPlayableCards(
+  hand: CardData[],
+  currentTrick: PlayedCard[],
+  discardPile: PlayedCard[],
+  leadSuit: Suit | '',
+): CardData[] {
+  const legal = hand.filter(card => canPlayCard(card, hand, currentTrick, discardPile, leadSuit));
+  return legal.length > 0 ? legal : hand;
+}
+
+function getTrickWinner(currentTrick: PlayedCard[], leadSuit: Suit | '', packedPlayerIds: string[] = []): PlayedCard | null {
+  if (currentTrick.length === 0) return null;
+  const suitToBeat = leadSuit || currentTrick[0].card.suit;
+  const packed = new Set(packedPlayerIds);
+  const activeTrick = currentTrick.filter(play => !packed.has(play.playerId));
+
+  return activeTrick
+    .filter(play => play.card.suit === suitToBeat)
+    .sort((a, b) => RANK_VALUE[b.card.rank] - RANK_VALUE[a.card.rank])[0] || activeTrick[0] || currentTrick[0];
+}
+
+function getNextClockwisePlayerId(
+  players: ArenaPlayer[],
+  hands: Record<string, CardData[]>,
+  playedCards: PlayedCard[],
+  currentPlayerId: string,
+  blockedPlayerIds: string[] = [],
+): string {
+  if (players.length === 0) return '';
+  const startIndex = Math.max(0, players.findIndex(player => player.id === currentPlayerId));
+  const blocked = new Set(blockedPlayerIds);
+
+  for (let offset = 1; offset <= players.length; offset++) {
+    const next = players[(startIndex + offset) % players.length];
+    if (blocked.has(next.id)) continue;
+    if (getRemainingCards(hands[next.id] || [], next.id, playedCards).length > 0) {
+      return next.id;
+    }
+  }
+
+  return '';
+}
+
+function getTurnOrderLabel(players: ArenaPlayer[], currentPlayerId: string, nextPlayerId: string): string {
+  const currentIndex = players.findIndex(player => player.id === currentPlayerId);
+  const nextIndex = players.findIndex(player => player.id === nextPlayerId);
+  if (currentIndex < 0 || nextIndex < 0) return '';
+  return `P${currentIndex + 1} -> P${nextIndex + 1}`;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SEAT POSITIONS
@@ -161,49 +350,49 @@ const ARENA_COLL = 'arena_rooms';
 function getSeatStyle(index: number, total: number): React.CSSProperties {
   const P: Record<number, { top: string; left: string; transform: string }[]> = {
     2: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'50%', transform:'translate(-50%,-50%)' },
     ],
     3: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'25%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'75%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'25%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'75%', transform:'translate(-50%,-50%)' },
     ],
     4: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'50%', transform:'translate(-50%,-50%)' },
       { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
       { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     5: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'30%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'70%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'30%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'70%', transform:'translate(-50%,-50%)' },
       { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
       { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     6: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'78%', transform:'translate(-50%,-50%)' },
       { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
       { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
     ],
     7: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'78%', transform:'translate(-50%,-50%)' },
       { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
       { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
       { top:'68%', left:'3%',  transform:'translate(0,-50%)' },
     ],
     8: [
-      { top:'82%', left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'50%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'22%', transform:'translate(-50%,-50%)' },
-      { top:'8%',  left:'78%', transform:'translate(-50%,-50%)' },
+      { top:'74%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'50%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'22%', transform:'translate(-50%,-50%)' },
+      { top:'16%', left:'78%', transform:'translate(-50%,-50%)' },
       { top:'45%', left:'3%',  transform:'translate(0,-50%)' },
       { top:'45%', left:'97%', transform:'translate(-100%,-50%)' },
       { top:'68%', left:'3%',  transform:'translate(0,-50%)' },
@@ -315,7 +504,7 @@ const Lobby: FC<{
           )}
 
           <p style={{ color:'#6b7280', fontSize:11, textAlign:'center' }}>
-            {Math.floor(52 / totalSeats)} cards per player
+            {getCardDistributionLabel(52, totalSeats)}
           </p>
 
           <button onClick={() => onCreateRoom(totalSeats, { count: botCount, level: botLevel })}
@@ -365,11 +554,11 @@ const Lobby: FC<{
 // WAITING ROOM
 // ══════════════════════════════════════════════════════════════════════════════
 const WaitingRoom: FC<{
-  room: ArenaRoom; currentUser: User | null;
+  room: ArenaRoom; myId: string;
   onJoinAsPlayer: () => void; onStartDeal: () => void; onLeave: () => void;
-}> = ({ room, currentUser, onJoinAsPlayer, onStartDeal, onLeave }) => {
-  const isHost = currentUser?.uid === room.hostId;
-  const amIn = room.players.some(p => p.id === (currentUser?.uid || ''));
+}> = ({ room, myId, onJoinAsPlayer, onStartDeal, onLeave }) => {
+  const isHost = myId === room.hostId;
+  const amIn = room.players.some(p => p.id === myId);
   const bots = room.players.filter(p => p.isBot);
   const humans = room.players.filter(p => !p.isBot);
 
@@ -395,7 +584,7 @@ const WaitingRoom: FC<{
               </div>
               <span style={{ color:'#fff', fontWeight:700, flex:1 }}>{p.name}</span>
               {i === 0 && <span style={{ color:'#fbbf24', fontSize:11 }}>👑 Host</span>}
-              {p.id === currentUser?.uid && <span style={{ color:'#4ade80', fontSize:11, fontWeight:900 }}>YOU</span>}
+              {p.id === myId && <span style={{ color:'#4ade80', fontSize:11, fontWeight:900 }}>YOU</span>}
             </div>
           ))}
           {bots.map(p => (
@@ -455,34 +644,93 @@ const DeckPile: FC<{ count: number; isShuffling: boolean }> = ({ count, isShuffl
 // ══════════════════════════════════════════════════════════════════════════════
 // FAN HAND — proper overlapping fan, numbers clearly visible
 // ══════════════════════════════════════════════════════════════════════════════
-const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ cards, faceDown, isMe }) => {
+const FanHand: FC<{
+  cards: CardData[];
+  faceDown: boolean;
+  isMe: boolean;
+  handSpacing?: number;
+  cardSignScale?: number;
+  handStyle?: HandStyle;
+  selectedCardKey?: string | null;
+  canInteract?: boolean;
+  onCardTap?: (card: CardData) => void;
+}> = ({
+  cards,
+  faceDown,
+  isMe,
+  handSpacing = 20,
+  cardSignScale = CARD_SIGN_SCALE_DEFAULT,
+  handStyle = 'readable',
+  selectedCardKey,
+  canInteract = false,
+  onCardTap,
+}) => {
   if (cards.length === 0) return null;
   const n = cards.length;
 
-  // My cards: bigger, more spread. Opponent: smaller, tighter
-  const cardW  = isMe ? 52  : 28;
-  const cardH  = isMe ? 76  : 40;
-  // Overlap: show at least 14px of each card (rank+suit corner)
-  const overlap = isMe ? Math.max(14, cardW - Math.min(28, 260 / n)) : Math.max(10, cardW - Math.min(16, 120 / n));
-  const step    = cardW - overlap;
+  // My cards are taller so both top and bottom ranks stay fully visible.
+  const cardW  = isMe ? 58  : 28;
+  const cardH  = isMe ? 92  : 40;
+  const signScale = clampCardSignScale(cardSignScale);
+  const isClassicHold = isMe && handStyle === 'classic';
+  const step = isMe
+    ? isClassicHold
+      ? Math.max(18, Math.min(30, clampCardSpacing(handSpacing)))
+      : clampCardSpacing(handSpacing)
+    : Math.max(10, Math.min(16, 120 / n));
   const totalW  = cardW + step * (n - 1);
-  const maxTilt = isMe ? 0 : 1.5; // slight tilt for opponents only
+  const maxTilt = isClassicHold ? Math.min(26, 10 + n * 0.8) : isMe ? 0 : 1.5; // slight tilt for opponents only
+  const handHeight = isClassicHold ? cardH + 30 : cardH + 24;
 
-  const red = (suit: string) => suit === '♥' || suit === '♦';
+  const red = (suit: string) => suit === SUITS[1] || suit === SUITS[2];
+  const handleHandClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isMe || !canInteract || !onCardTap) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const cardIndex = Math.max(0, Math.min(n - 1, Math.floor(x / step)));
+    onCardTap(cards[cardIndex]);
+  };
 
   return (
-    <div style={{ position: 'relative', width: totalW, height: cardH + 4, flexShrink: 0 }}>
+    <div style={{
+      width: isMe ? 'min(94vw, 1120px)' : totalW,
+      maxWidth: isMe ? '94vw' : totalW,
+      overflowX: isMe ? 'auto' : 'visible',
+      overflowY: 'visible',
+      padding: isMe ? isClassicHold ? '26px 6px 4px' : '22px 6px 8px' : 0,
+      flexShrink: 0,
+    }}>
+    <div
+      onClick={handleHandClick}
+      style={{ position: 'relative', width: totalW, height: handHeight, flexShrink: 0, margin: isMe ? '0 auto' : undefined, cursor: canInteract ? 'pointer' : 'default' }}
+    >
       {cards.map((card, i) => {
-        const tilt = n > 1 ? ((i / (n - 1)) - 0.5) * maxTilt * 2 : 0;
+        const spreadRatio = n > 1 ? ((i / (n - 1)) - 0.5) : 0;
+        const tilt = isClassicHold ? spreadRatio * maxTilt * 2 : n > 1 ? spreadRatio * maxTilt * 2 : 0;
+        const cardKey = getCardKey(card);
+        const isSelected = isMe && selectedCardKey === cardKey;
+        const fanY = isClassicHold ? (isSelected ? -24 : Math.abs(spreadRatio) * 18) : 0;
+        const cardTransform = isClassicHold
+          ? `translateY(${fanY}px) rotate(${tilt}deg)`
+          : `rotate(${tilt}deg)`;
+        const fanVars = isClassicHold
+          ? ({ '--fan-rot': `${tilt}deg`, '--fan-y': `${fanY}px` } as React.CSSProperties)
+          : {};
         return (
-          <div key={i} style={{
+          <div key={cardKey} style={{
             position: 'absolute',
             left: i * step,
-            top: 0,
-            zIndex: i + 1,
-            transform: `rotate(${tilt}deg)`,
-            transformOrigin: 'bottom center',
-            animation: `dealIn 0.3s ease-out ${i * 0.05}s both`,
+            top: isClassicHold ? 8 : isSelected ? 0 : 18,
+            zIndex: isSelected ? 200 : i + 1,
+            transform: cardTransform,
+            transformOrigin: isClassicHold ? '50% 118%' : 'bottom center',
+            animation: isClassicHold
+              ? `classicFanIn 0.52s cubic-bezier(.2,.9,.25,1.15) ${i * 0.035}s both`
+              : `dealIn 0.3s ease-out ${i * 0.05}s both`,
+            transition: 'top 140ms ease, filter 140ms ease, transform 140ms ease',
+            cursor: canInteract ? 'pointer' : 'default',
+            filter: isSelected ? 'drop-shadow(0 0 14px rgba(74,222,128,0.75))' : undefined,
+            ...fanVars,
           }}>
             {faceDown ? (
               <div style={{
@@ -499,16 +747,24 @@ const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ 
                 }} />
               </div>
             ) : (
-              <div style={{
+              <button
+                type="button"
+                onClick={() => canInteract && onCardTap?.(card)}
+                disabled={!canInteract}
+                aria-label={`Card ${getCardLabel(card)}`}
+                style={{
                 width: cardW, height: cardH, borderRadius: 5,
                 background: '#fff', border: '1.5px solid #bbb',
                 boxShadow: '0 3px 10px rgba(0,0,0,0.4)',
-                display: 'flex', flexDirection: 'column',
-                padding: isMe ? '3px 4px' : '2px 3px',
+                display: 'block',
+                padding: 0,
                 boxSizing: 'border-box', overflow: 'hidden',
+                position: 'relative',
+                cursor: canInteract ? 'pointer' : 'default',
+                pointerEvents: 'none',
               }}>
                 {/* Top-left: rank + suit stacked */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1, flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: isMe ? 5 : 3, left: isMe ? 6 : 3, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.05 }}>
                   <span style={{
                     fontSize: isMe ? 13 : 8, fontWeight: 900, lineHeight: 1,
                     color: red(card.suit) ? '#cc0000' : '#111',
@@ -517,16 +773,18 @@ const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ 
                   <span style={{
                     fontSize: isMe ? 11 : 7, lineHeight: 1,
                     color: red(card.suit) ? '#cc0000' : '#111',
-                  }}>{card.suit}</span>
+                  }}>
+                    <SuitMark suit={card.suit} size={(isMe ? 9 : 6) * signScale} color={red(card.suit) ? '#cc0000' : '#111'} />
+                  </span>
                 </div>
                 {/* Center suit — only show on my cards */}
-                {isMe && (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontSize: 20, color: red(card.suit) ? '#cc0000' : '#111' }}>{card.suit}</span>
+                {(
+                  <div style={{ position: 'absolute', top: isMe ? 22 : 12, right: isMe ? 8 : 4, bottom: isMe ? 22 : 12, left: isMe ? 8 : 4, display: 'flex', pointerEvents: 'none' }}>
+                    <ClassicPips suit={card.suit} rank={card.rank} compact={!isMe} symbolScale={signScale} />
                   </div>
                 )}
                 {/* Bottom-right rotated */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.1, transform: 'rotate(180deg)', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', right: isMe ? 6 : 3, bottom: isMe ? 5 : 3, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.05, transform: 'rotate(180deg)' }}>
                   <span style={{
                     fontSize: isMe ? 13 : 8, fontWeight: 900, lineHeight: 1,
                     color: red(card.suit) ? '#cc0000' : '#111',
@@ -535,13 +793,16 @@ const FanHand: FC<{ cards: CardData[]; faceDown: boolean; isMe: boolean }> = ({ 
                   <span style={{
                     fontSize: isMe ? 11 : 7, lineHeight: 1,
                     color: red(card.suit) ? '#cc0000' : '#111',
-                  }}>{card.suit}</span>
+                  }}>
+                    <SuitMark suit={card.suit} size={(isMe ? 9 : 6) * signScale} color={red(card.suit) ? '#cc0000' : '#111'} />
+                  </span>
                 </div>
-              </div>
+              </button>
             )}
           </div>
         );
       })}
+    </div>
     </div>
   );
 };
@@ -553,20 +814,62 @@ const PlayerSeat: FC<{
   player: ArenaPlayer; cards: CardData[];
   isMe: boolean; revealed: boolean;
   onReveal: () => void; visibleCount: number;
-  botDecision?: { action: string; comment: string; handInfo: HandEval } | null;
+  handSpacing: number;
+  cardSignScale: number;
+  handStyle: HandStyle;
+  cardProfileGap: number;
+  wonCards?: PlayedCard[];
+  isPubliclyRevealed?: boolean;
+  isPacked?: boolean;
+  selectedCardKey?: string | null;
+  isMyTurn?: boolean;
+  onCardTap?: (card: CardData) => void;
+  onShowCardsPublicly?: () => void;
+  onPackCards?: () => void;
   isThinking?: boolean;
-}> = ({ player, cards, isMe, revealed, onReveal, visibleCount, botDecision, isThinking }) => {
+}> = ({ player, cards, isMe, revealed, onReveal, visibleCount, handSpacing, cardSignScale, handStyle, cardProfileGap, wonCards = [], isPubliclyRevealed = false, isPacked = false, selectedCardKey, isMyTurn, onCardTap, onShowCardsPublicly, onPackCards, isThinking }) => {
   const [showCards, setShowCards] = useState(false);
   const dealtCards = cards.slice(0, visibleCount);
   const isBot = player.isBot;
   const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
   const avatarSize = isMe ? 40 : 32;
+  const lastWonCard = wonCards[wonCards.length - 1];
 
-  useEffect(() => { if (revealed && isMe) setShowCards(true); }, [revealed, isMe]);
+  useEffect(() => { if ((revealed || isPubliclyRevealed) && isMe) setShowCards(true); }, [revealed, isPubliclyRevealed, isMe]);
+
+  const WonDeck = wonCards.length > 0 && (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+      <div style={{ position: 'relative', width: 28, height: 22 }}>
+        {Array.from({ length: Math.min(3, wonCards.length) }).map((_, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            left: i * 3,
+            top: i * -1,
+            width: 18,
+            height: 24,
+            borderRadius: 3,
+            background: 'linear-gradient(135deg,#1e3a8a,#2563eb)',
+            border: '1px solid rgba(255,255,255,0.9)',
+            boxShadow: '0 2px 5px rgba(0,0,0,0.45)',
+          }} />
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, lineHeight: 1 }}>
+        <span style={{ color: '#bbf7d0', fontSize: 9, fontWeight: 900, textShadow: '0 2px 5px rgba(0,0,0,0.75)' }}>
+          Deck {wonCards.length}
+        </span>
+        {lastWonCard?.isCut && (
+          <span style={{ color: '#facc15', fontSize: 8, fontWeight: 900, textShadow: '0 2px 5px rgba(0,0,0,0.75)' }}>
+            Cut received
+          </span>
+        )}
+      </div>
+    </div>
+  );
 
   // Name tag component
   const NameTag = (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, marginTop: 3 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, marginTop: isMe ? clampCardProfileGap(cardProfileGap) : 3 }}>
       <div style={{ position: 'relative' }}>
         <div style={{
           width: avatarSize, height: avatarSize, borderRadius: '50%', overflow: 'hidden',
@@ -585,15 +888,14 @@ const PlayerSeat: FC<{
           <div style={{ position: 'absolute', top: -4, right: -4, background: '#1d4ed8', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, animation: 'pulse 0.6s infinite' }}>💭</div>
         )}
       </div>
-      <div style={{ background: 'rgba(0,0,0,0.85)', borderRadius: 5, padding: '1px 6px', maxWidth: 88, textAlign: 'center' }}>
-        <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight: 900, fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 84, margin: 0 }}>
+      <div style={{ padding: '1px 6px', maxWidth: 104, textAlign: 'center' }}>
+        <p style={{ color: isMe ? '#4ade80' : isBot ? levelColor : '#fff', fontWeight: 900, fontSize: 10, textShadow: '0 2px 6px rgba(0,0,0,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100, margin: 0 }}>
           {isMe ? 'YOU' : player.name}
         </p>
-        {isBot && botDecision && !isThinking && (
-          <p style={{ color: '#6b7280', fontSize: 8, fontStyle: 'italic', margin: 0, maxWidth: 84, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{botDecision.comment}"</p>
-        )}
-        {isBot && botDecision && (
-          <p style={{ color: levelColor, fontSize: 8, fontWeight: 900, margin: 0 }}>{botDecision.handInfo.description}</p>
+        {isPacked && (
+          <p style={{ color: '#f87171', fontWeight: 900, fontSize: 8, textShadow: '0 2px 5px rgba(0,0,0,0.8)', margin: '2px 0 0' }}>
+            PACKED
+          </p>
         )}
       </div>
     </div>
@@ -604,9 +906,58 @@ const PlayerSeat: FC<{
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
         {dealtCards.length > 0 && (
-          <FanHand cards={dealtCards} faceDown={!showCards} isMe={true} />
+          <FanHand
+            cards={dealtCards}
+            faceDown={!showCards}
+            isMe={true}
+            handSpacing={handSpacing}
+            cardSignScale={cardSignScale}
+            handStyle={handStyle}
+            selectedCardKey={selectedCardKey}
+            canInteract={showCards}
+            onCardTap={onCardTap}
+          />
         )}
         {NameTag}
+        {WonDeck}
+        {dealtCards.length > 0 && showCards && !isPacked && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 5 }}>
+            {!isPubliclyRevealed && (
+              <button
+                type="button"
+                onClick={() => { setShowCards(true); onShowCardsPublicly?.(); }}
+                style={{
+                  padding: '5px 9px',
+                  borderRadius: 7,
+                  background: 'rgba(59,130,246,0.18)',
+                  color: '#93c5fd',
+                  border: '1px solid rgba(147,197,253,0.35)',
+                  fontWeight: 900,
+                  fontSize: 9,
+                  cursor: 'pointer',
+                }}
+              >
+                Show Cards
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onPackCards}
+              style={{
+                padding: '5px 9px',
+                borderRadius: 7,
+                background: 'rgba(239,68,68,0.16)',
+                color: '#fca5a5',
+                border: '1px solid rgba(252,165,165,0.35)',
+                fontWeight: 900,
+                fontSize: 9,
+                cursor: 'pointer',
+              }}
+            >
+              Pack
+            </button>
+          </div>
+        )}
         {dealtCards.length > 0 && !showCards && (
           <button onClick={() => { setShowCards(true); onReveal(); }}
             style={{ marginTop: 4, padding: '5px 16px', borderRadius: 8, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', fontWeight: 900, fontSize: 11, border: 'none', cursor: 'pointer', boxShadow: '0 2px 10px rgba(22,163,74,0.5)' }}>
@@ -614,7 +965,9 @@ const PlayerSeat: FC<{
           </button>
         )}
         {dealtCards.length > 0 && showCards && (
-          <span style={{ marginTop: 3, fontSize: 9, color: '#4ade80', fontWeight: 700 }}>✓ Revealed</span>
+          <span style={{ marginTop: 3, fontSize: 9, color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 700 }}>
+            {isMyTurn ? 'Your turn' : '✓ Revealed'}
+          </span>
         )}
       </div>
     );
@@ -624,9 +977,10 @@ const PlayerSeat: FC<{
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
       {dealtCards.length > 0 && (
-        <FanHand cards={dealtCards} faceDown={true} isMe={false} />
+        <FanHand cards={dealtCards} faceDown={!isPubliclyRevealed && !isPacked} isMe={false} cardSignScale={cardSignScale} handStyle={handStyle} />
       )}
       {NameTag}
+      {WonDeck}
     </div>
   );
 };
@@ -637,9 +991,18 @@ const PlayerSeat: FC<{
 const PokerTable: FC<{
   room: ArenaRoom; myId: string;
   onReveal: () => void; onNewGame: () => void; onLeave: () => void;
-}> = ({ room, myId, onReveal, onNewGame, onLeave }) => {
+  onRoomUpdate: (updates: Partial<ArenaRoom>) => Promise<void>;
+  handSpacing: number;
+  onHandSpacingChange: (value: number) => void;
+  cardSignScale: number;
+  onCardSignScaleChange: (value: number) => void;
+  handStyle: HandStyle;
+  onHandStyleChange: (value: HandStyle) => void;
+  cardProfileGap: number;
+  onCardProfileGapChange: (value: number) => void;
+}> = ({ room, myId, onReveal, onNewGame, onLeave, onRoomUpdate, handSpacing, onHandSpacingChange, cardSignScale, onCardSignScaleChange, handStyle, onHandStyleChange, cardProfileGap, onCardProfileGapChange }) => {
   const isHost = myId === room.hostId;
-  const perPlayer = Math.floor(52 / room.players.length);
+  const totalDealtCards = getTotalHandCards(room.hands);
 
   const myIndex = room.players.findIndex(p => p.id === myId);
   const ordered = myIndex >= 0
@@ -651,18 +1014,37 @@ const PokerTable: FC<{
   const [isShuffling, setIsShuffling] = useState(false);
   const [dealDone, setDealDone] = useState(false);
   const dealRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [botDecisions, setBotDecisions] = useState<Record<string, { action: string; comment: string; handInfo: HandEval } | null>>({});
   const [thinkingBots, setThinkingBots] = useState<Set<string>>(new Set());
+  const [isCompactLayout, setIsCompactLayout] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth < 980 : false
+  ));
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [selectedCardKey, setSelectedCardKey] = useState<string | null>(null);
+  const [playMessage, setPlayMessage] = useState('');
+  const botPlayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const botTurnKeyRef = useRef('');
+  const trickResolveKeyRef = useRef('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => setIsCompactLayout(window.innerWidth < 980);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     if (room.status === 'shuffling') {
       setIsShuffling(true); setDealDone(false);
       setVisibleCounts({}); setDeckLeft(52);
-      setBotDecisions({}); setThinkingBots(new Set());
+      setThinkingBots(new Set());
+      setSelectedCardKey(null); setPlayMessage('');
+      if (botPlayRef.current) clearTimeout(botPlayRef.current);
+      botTurnKeyRef.current = '';
+      trickResolveKeyRef.current = '';
     } else if ((room.status === 'reveal' || room.status === 'done') && !dealDone) {
       setIsShuffling(false); setDealDone(true);
       const players = room.players;
-      const total = perPlayer * players.length;
+      const total = getTotalHandCards(room.hands);
       let cardIdx = 0;
       const dealNext = () => {
         if (cardIdx >= total) { setDeckLeft(52 - total); triggerBotThinking(); return; }
@@ -677,31 +1059,313 @@ const PokerTable: FC<{
     return () => { if (dealRef.current) clearTimeout(dealRef.current); };
   }, [room.status]);
 
+  useEffect(() => () => {
+    if (botPlayRef.current) clearTimeout(botPlayRef.current);
+  }, []);
+
   const triggerBotThinking = () => {
     room.players.filter(p => p.isBot).forEach((bot, i) => {
       const cfg = BOT_CONFIGS[bot.botLevel || 'rookie'];
       const thinkTime = cfg.thinkMs[0] + Math.random() * (cfg.thinkMs[1] - cfg.thinkMs[0]) + i * 300;
       setThinkingBots(prev => new Set([...prev, bot.id]));
       setTimeout(() => {
-        const decision = botDecide(room.hands[bot.id] || [], bot.botLevel || 'rookie');
-        setBotDecisions(prev => ({ ...prev, [bot.id]: decision }));
+        void botDecide(room.hands[bot.id] || [], bot.botLevel || 'rookie');
         setThinkingBots(prev => { const s = new Set(prev); s.delete(bot.id); return s; });
       }, thinkTime);
     });
   };
 
-  const allDealt = ordered.every(p => (visibleCounts[p.id] || 0) >= perPlayer);
-  const botWinner = allDealt && Object.keys(botDecisions).length > 0
-    ? room.players.filter(p => p.isBot && botDecisions[p.id]?.action === 'play')
-        .sort((a, b) => (botDecisions[b.id]?.handInfo.score || 0) - (botDecisions[a.id]?.handInfo.score || 0))[0]
-    : null;
+  const allDealt = totalDealtCards > 0 && ordered.every(p => (visibleCounts[p.id] || 0) >= (room.hands[p.id] || []).length);
+  const playedCards = room.playedCards || [];
+  const discardPile = room.discardPile || [];
+  const capturedPiles = room.capturedPiles || {};
+  const publicRevealedBy = room.publicRevealedBy || [];
+  const packedPlayerIds = room.packedPlayerIds || [];
+  const currentTurnId = room.currentTurnId || '';
+  const currentTurnPlayer = room.players.find(player => player.id === currentTurnId) || null;
+  const isMyTurn = currentTurnId === myId;
+  const leadSuit = room.leadSuit || playedCards[0]?.card.suit || '';
+  const usedCardCount = playedCards.length + discardPile.length;
+  const activePlayers = room.players.filter(player => !packedPlayerIds.includes(player.id));
+  const activePlayersWithCards = activePlayers.filter(player =>
+    getRemainingCards(room.hands[player.id] || [], player.id, [...discardPile, ...playedCards]).length > 0
+  );
+  const roundComplete = allDealt && (usedCardCount >= totalDealtCards || activePlayersWithCards.length <= 1);
+  const cutPlayedOnTable = playedCards.some(play => play.isCut);
+  const activeTrickPlayers = activePlayers.filter(player =>
+    playedCards.some(play => play.playerId === player.id) ||
+    getRemainingCards(room.hands[player.id] || [], player.id, [...discardPile, ...playedCards]).length > 0
+  );
+  const currentTrickComplete = allDealt && playedCards.length > 0 && (
+    cutPlayedOnTable ||
+    activeTrickPlayers.every(player => playedCards.some(play => play.playerId === player.id))
+  );
+  const firstPlayNeedsAce = discardPile.length === 0 && playedCards.length === 0;
+  const capturedDeckLeader = room.players
+    .map(player => ({ player, count: capturedPiles[player.id]?.length || 0 }))
+    .filter(entry => entry.count > 0)
+    .sort((a, b) => b.count - a.count)[0];
+
+  const getVisibleCards = (playerId: string) => getRemainingCards(
+    room.hands[playerId] || [],
+    playerId,
+    [...discardPile, ...playedCards],
+  );
+
+  const playCardForPlayer = async (player: ArenaPlayer, card: CardData) => {
+    if (!allDealt) return;
+    if (packedPlayerIds.includes(player.id)) return;
+    if (currentTurnId && player.id !== currentTurnId) return;
+
+    const remaining = getVisibleCards(player.id);
+    if (!remaining.some(remainingCard => getCardKey(remainingCard) === getCardKey(card))) return;
+
+    if (firstPlayNeedsAce && !isAceOfSpades(card)) {
+      setPlayMessage(`Start with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}.`);
+      return;
+    }
+
+    if (!canPlayCard(card, remaining, playedCards, discardPile, leadSuit)) {
+      const neededSuit = leadSuit || SUITS[0];
+      setPlayMessage(`Follow ${neededSuit} if you have it.`);
+      return;
+    }
+
+    const nextLeadSuit = leadSuit || card.suit;
+    const playIsCut = isCutPlay(card, remaining, playedCards, nextLeadSuit);
+
+    const nextPlayedCards: PlayedCard[] = [
+      ...playedCards,
+      {
+        playerId: player.id,
+        playerName: player.name,
+        card,
+        order: playedCards.length,
+        timestamp: Date.now(),
+        isCut: playIsCut,
+      },
+    ];
+    const blockedForNextTurn = [...packedPlayerIds, ...nextPlayedCards.map(play => play.playerId)];
+    const nextTurnId = playIsCut
+      ? ''
+      : getNextClockwisePlayerId(room.players, room.hands, [...discardPile, ...nextPlayedCards], player.id, blockedForNextTurn);
+    const nextPlayer = room.players.find(candidate => candidate.id === nextTurnId);
+    const turnOrderLabel = nextPlayer ? getTurnOrderLabel(room.players, player.id, nextTurnId) : '';
+
+    setSelectedCardKey(null);
+    setPlayMessage(playIsCut
+      ? `${player.name} cuts with ${getCardLabel(card)}`
+      : nextPlayer ? `${turnOrderLabel ? `${turnOrderLabel}: ` : ''}${nextPlayer.name}'s turn` : 'Checking trick winner...');
+    await onRoomUpdate({
+      playedCards: nextPlayedCards,
+      currentTurnId: nextTurnId,
+      gameStarted: true,
+      leadSuit: nextLeadSuit,
+    });
+  };
+
+  const handleMyCardTap = (card: CardData) => {
+    const key = getCardKey(card);
+
+    if (selectedCardKey !== key) {
+      setSelectedCardKey(key);
+      if (firstPlayNeedsAce && !isAceOfSpades(card)) {
+        setPlayMessage(`Select ${getCardLabel({ rank: 'A', suit: SUITS[0] })} to start.`);
+      } else if (!isMyTurn) {
+        setPlayMessage(currentTurnPlayer ? `Wait for ${currentTurnPlayer.name}.` : 'Waiting for first turn.');
+      } else if (!canPlayCard(card, getVisibleCards(myId), playedCards, discardPile, leadSuit)) {
+        setPlayMessage(`Follow ${leadSuit || SUITS[0]} if you have it.`);
+      } else if (isCutPlay(card, getVisibleCards(myId), playedCards, leadSuit)) {
+        setPlayMessage(`No ${leadSuit} cards. Tap again to cut with ${getCardLabel(card)}.`);
+      } else {
+        setPlayMessage('Tap the raised card again to play it.');
+      }
+      return;
+    }
+
+    if (!isMyTurn) {
+      setPlayMessage(currentTurnPlayer ? `Wait for ${currentTurnPlayer.name}.` : 'Waiting for first turn.');
+      return;
+    }
+
+    const me = room.players.find(player => player.id === myId);
+    if (me) void playCardForPlayer(me, card);
+  };
+
+  const handleShowCardsPublicly = async () => {
+    if (publicRevealedBy.includes(myId)) return;
+    setPlayMessage('Your cards are shown to everyone.');
+    await onRoomUpdate({ publicRevealedBy: [...publicRevealedBy, myId] });
+  };
+
+  const handlePackCards = async () => {
+    if (packedPlayerIds.includes(myId)) return;
+
+    const nextPackedPlayerIds = [...packedPlayerIds, myId];
+    const nextPublicRevealedBy = publicRevealedBy.includes(myId)
+      ? publicRevealedBy
+      : [...publicRevealedBy, myId];
+    const updates: Partial<ArenaRoom> = {
+      packedPlayerIds: nextPackedPlayerIds,
+      publicRevealedBy: nextPublicRevealedBy,
+    };
+
+    if (currentTurnId === myId) {
+      const nextTurnId = getNextClockwisePlayerId(
+        room.players,
+        room.hands,
+        [...discardPile, ...playedCards],
+        myId,
+        [...nextPackedPlayerIds, ...playedCards.map(play => play.playerId)],
+      );
+      updates.currentTurnId = nextTurnId;
+
+      const nextPlayer = room.players.find(player => player.id === nextTurnId);
+      setPlayMessage(nextPlayer ? `${nextPlayer.name}'s turn` : 'Checking trick winner...');
+    } else {
+      setPlayMessage('You packed and accepted the loss.');
+    }
+
+    await onRoomUpdate(updates);
+  };
+
+  useEffect(() => {
+    if (!allDealt || room.currentTurnId || room.gameStarted) return;
+
+    const startingPlayerId = getStartingPlayerId(room.players, room.hands);
+    if (!startingPlayerId) return;
+
+    const startingPlayer = room.players.find(player => player.id === startingPlayerId);
+    setPlayMessage(startingPlayer ? `${startingPlayer.name} starts with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}` : '');
+    void onRoomUpdate({ currentTurnId: startingPlayerId, gameStarted: true, playedCards: [], discardPile: [], leadSuit: '' });
+  }, [allDealt, room.currentTurnId, room.gameStarted, room.roomId]);
+
+  useEffect(() => {
+    if (!currentTrickComplete || playedCards.length === 0) return;
+
+    const resolveKey = `${room.roomId}-${discardPile.length}-${playedCards.map(play => `${play.playerId}:${getCardKey(play.card)}`).join('|')}`;
+    if (trickResolveKeyRef.current === resolveKey) return;
+    trickResolveKeyRef.current = resolveKey;
+
+    const winner = getTrickWinner(playedCards, leadSuit, packedPlayerIds);
+    if (!winner) return;
+
+    const cutPlays = getCutPlays(playedCards, leadSuit);
+    const cutMessage = cutPlays.length > 0
+      ? ` Cut goes to ${winner.playerName}.`
+      : '';
+    setPlayMessage(`${winner.playerName} wins trick with ${getCardLabel(winner.card)}.${cutMessage}`);
+    const timeout = setTimeout(() => {
+      const capturedCards = playedCards.map(play => ({
+        ...play,
+        capturedBy: winner.playerId,
+        capturedAt: Date.now(),
+      }));
+      const nextDiscardPile = [...discardPile, ...capturedCards];
+      const nextCapturedPiles = {
+        ...capturedPiles,
+        [winner.playerId]: [...(capturedPiles[winner.playerId] || []), ...capturedCards],
+      };
+      const isGameDone = nextDiscardPile.length >= totalDealtCards;
+      const winnerCanLead = getRemainingCards(room.hands[winner.playerId] || [], winner.playerId, nextDiscardPile).length > 0;
+      const nextLeadPlayerId = isGameDone
+        ? ''
+        : winnerCanLead
+          ? winner.playerId
+          : getNextClockwisePlayerId(room.players, room.hands, nextDiscardPile, winner.playerId, packedPlayerIds);
+      const nextLeadPlayer = room.players.find(candidate => candidate.id === nextLeadPlayerId);
+
+      void onRoomUpdate({
+        playedCards: [],
+        discardPile: nextDiscardPile,
+        capturedPiles: nextCapturedPiles,
+        currentTurnId: nextLeadPlayerId,
+        leadSuit: '',
+      });
+      setPlayMessage(isGameDone
+        ? 'All cards played'
+        : cutPlays.length > 0
+          ? winnerCanLead
+            ? `${winner.playerName} received the cut and leads next`
+            : `${winner.playerName} received the cut. ${nextLeadPlayer?.name || 'Next player'} leads next`
+          : `${nextLeadPlayer?.name || winner.playerName} leads next`);
+    }, TRICK_CLEAR_DELAY_MS);
+
+    return () => clearTimeout(timeout);
+  }, [currentTrickComplete, playedCards.length, discardPile.length, leadSuit, room.roomId]);
+
+  useEffect(() => {
+    if (!allDealt || !currentTurnId || roundComplete || currentTrickComplete) return;
+
+    const currentPlayer = room.players.find(player => player.id === currentTurnId);
+    if (!currentPlayer?.isBot) return;
+    if (packedPlayerIds.includes(currentPlayer.id)) return;
+
+    const turnKey = `${room.roomId}-${currentTurnId}-${playedCards.length}`;
+    if (botTurnKeyRef.current === turnKey) return;
+    botTurnKeyRef.current = turnKey;
+
+    setThinkingBots(prev => new Set([...prev, currentPlayer.id]));
+    botPlayRef.current = setTimeout(() => {
+      const remaining = getVisibleCards(currentPlayer.id);
+      const mustCut = Boolean(leadSuit && playedCards.length > 0 && !remaining.some(card => card.suit === leadSuit));
+      const playable = getPlayableCards(remaining, playedCards, discardPile, leadSuit);
+      const cardToPlay = firstPlayNeedsAce
+        ? remaining.find(isAceOfSpades) || remaining[0]
+        : mustCut
+          ? getRandomCard(playable)
+          : [...playable].sort((a, b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank])[0];
+
+      setThinkingBots(prev => {
+        const next = new Set(prev);
+        next.delete(currentPlayer.id);
+        return next;
+      });
+
+      if (cardToPlay) void playCardForPlayer(currentPlayer, cardToPlay);
+    }, BOT_CARD_PLAY_DELAY_MS);
+
+    return () => {
+      if (botPlayRef.current) clearTimeout(botPlayRef.current);
+    };
+  }, [allDealt, currentTurnId, playedCards.length, discardPile.length, leadSuit, room.roomId, roundComplete, currentTrickComplete]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Table fills all available space */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: !isCompactLayout && controlsOpen ? 'minmax(0,1fr) 320px' : '1fr',
+      gridTemplateRows: '1fr',
+      height: '100%',
+      overflow: 'hidden',
+      background: '#041105',
+      position: 'relative',
+    }}>
+      {/* Table stage stays separate from controls so seats and cards never sit under UI. */}
+      <div style={{ position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: isCompactLayout ? 560 : 0 }}>
         {/* Dark bg */}
         <div style={{ position: 'absolute', inset: 0, background: '#071407' }} />
+
+        <button
+          type="button"
+          onClick={() => setControlsOpen(true)}
+          style={{
+            position: 'absolute',
+            top: 14,
+            right: 14,
+            zIndex: 60,
+            padding: '9px 13px',
+            borderRadius: 12,
+            border: '1px solid rgba(74,222,128,0.28)',
+            background: 'rgba(0,0,0,0.72)',
+            color: '#bbf7d0',
+            fontWeight: 900,
+            fontSize: 12,
+            cursor: 'pointer',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+          }}
+        >
+          Controls
+        </button>
 
         {/* Wood border — proper wide ellipse */}
         <div style={{
@@ -740,9 +1404,58 @@ const PokerTable: FC<{
               🔀 SHUFFLING...
             </div>
           )}
-          {botWinner && allDealt && (
-            <div style={{ background: 'rgba(0,0,0,0.9)', borderRadius: 8, padding: '4px 12px', color: '#f59e0b', fontWeight: 900, fontSize: 11 }}>
-              🏆 {botWinner.name} wins!
+          {allDealt && playedCards.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 86, marginTop: 2 }}>
+              {playedCards.map((play, index, list) => (
+                <div key={`${play.playerId}-${play.order}`} style={{
+                  position: 'relative',
+                  marginLeft: index === 0 ? 0 : -22,
+                  transform: `rotate(${(index - (list.length - 1) / 2) * 5}deg)`,
+                  zIndex: index + 1,
+                }}>
+                  <PlayingCard card={play.card} small symbolScale={cardSignScale} />
+                  {play.isCut && (
+                    <div style={{
+                      position: 'absolute',
+                      left: '50%',
+                      bottom: -13,
+                      transform: 'translateX(-50%)',
+                      borderRadius: 999,
+                      padding: '1px 5px',
+                      background: 'rgba(250,204,21,0.95)',
+                      color: '#111827',
+                      fontSize: 8,
+                      fontWeight: 900,
+                    }}>
+                      CUT
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {allDealt && (
+            <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 8, padding: '5px 12px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 11, maxWidth: 240, textAlign: 'center' }}>
+              {roundComplete
+                ? 'Round complete'
+                : currentTrickComplete
+                  ? 'Checking trick winner...'
+                  : isMyTurn
+                    ? 'Your turn: tap a card twice'
+                    : currentTurnPlayer
+                      ? `${currentTurnPlayer.name}'s turn`
+                      : `Start with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}`}
+              {playMessage && <div style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, marginTop: 2 }}>{playMessage}</div>}
+            </div>
+          )}
+          {allDealt && discardPile.length > 0 && (
+            <div style={{ background: 'rgba(0,0,0,0.82)', borderRadius: 8, padding: '4px 10px', color: '#9ca3af', fontWeight: 800, fontSize: 10 }}>
+              Won decks: {discardPile.length} cards
+              {capturedDeckLeader && (
+                <div style={{ color: '#bbf7d0', marginTop: 2 }}>
+                  {capturedDeckLeader.player.name}: {capturedDeckLeader.count}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -752,10 +1465,21 @@ const PokerTable: FC<{
           {ordered.map((player, seatIdx) => (
             <div key={player.id} style={{ ...getSeatStyle(seatIdx, ordered.length) }}>
               <PlayerSeat
-                player={player} cards={room.hands[player.id] || []}
+                player={player} cards={getVisibleCards(player.id)}
                 isMe={player.id === myId} revealed={room.revealedBy.includes(player.id)}
                 onReveal={onReveal} visibleCount={visibleCounts[player.id] || 0}
-                botDecision={player.isBot ? (botDecisions[player.id] || null) : null}
+                handSpacing={handSpacing}
+                cardSignScale={cardSignScale}
+                handStyle={handStyle}
+                cardProfileGap={cardProfileGap}
+                wonCards={capturedPiles[player.id] || []}
+                isPubliclyRevealed={publicRevealedBy.includes(player.id)}
+                isPacked={packedPlayerIds.includes(player.id)}
+                selectedCardKey={player.id === myId ? selectedCardKey : null}
+                isMyTurn={player.id === myId && isMyTurn}
+                onCardTap={player.id === myId ? handleMyCardTap : undefined}
+                onShowCardsPublicly={player.id === myId ? handleShowCardsPublicly : undefined}
+                onPackCards={player.id === myId ? handlePackCards : undefined}
                 isThinking={player.isBot ? thinkingBots.has(player.id) : false}
               />
             </div>
@@ -763,13 +1487,39 @@ const PokerTable: FC<{
         </div>
       </div>
 
-      {/* Bottom action bar — fixed height */}
+      {/* Controls panel */}
+      {controlsOpen && (
       <div style={{
-        height: 44, padding: '0 16px', display: 'flex', gap: 10, alignItems: 'center',
-        background: 'rgba(0,0,0,0.85)', borderTop: '1px solid rgba(255,255,255,0.08)',
-        flexShrink: 0,
+        position: isCompactLayout ? 'absolute' : 'relative',
+        top: isCompactLayout ? 0 : undefined,
+        right: isCompactLayout ? 0 : undefined,
+        bottom: isCompactLayout ? 0 : undefined,
+        width: isCompactLayout ? 'min(320px, 92vw)' : 'auto',
+        zIndex: isCompactLayout ? 80 : undefined,
+        borderLeft: isCompactLayout ? 'none' : '1px solid rgba(74,222,128,0.14)',
+        borderTop: isCompactLayout ? '1px solid rgba(74,222,128,0.14)' : 'none',
+        background: 'linear-gradient(180deg,rgba(0,0,0,0.82),rgba(2,19,8,0.94))',
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+        overflowY: 'auto',
+        minWidth: 0,
       }}>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <p style={{ color: '#4ade80', fontWeight: 900, letterSpacing: 3, fontSize: 12, margin: 0 }}>ARENA CONTROLS</p>
+            <p style={{ color: '#6b7280', fontSize: 11, margin: '5px 0 0' }}>Room {room.roomId}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setControlsOpen(false)}
+            style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: '#d1d5db', fontWeight: 900, cursor: 'pointer' }}
+          >
+            X
+          </button>
+        </div>
+        <div style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ color: '#4ade80', fontSize: 11, fontWeight: 700, fontFamily: 'monospace', letterSpacing: 2 }}>{room.roomId}</span>
           <span style={{ color: '#6b7280', fontSize: 10 }}>
             {room.players.filter(p => !p.isBot).length}👤
@@ -777,15 +1527,155 @@ const PokerTable: FC<{
           </span>
           {allDealt && <span style={{ color: '#4ade80', fontSize: 10, fontWeight: 700 }}>✓ All dealt</span>}
         </div>
+
+        <div style={{ background: 'rgba(74,222,128,0.07)', border: '1px solid rgba(74,222,128,0.18)', borderRadius: 14, padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+            <p style={{ color: '#d1fae5', fontWeight: 900, fontSize: 12, margin: 0 }}>Card spacing</p>
+            <span style={{ color: '#4ade80', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{handSpacing}px</span>
+          </div>
+          <input
+            type="range"
+            min={CARD_SPACING_MIN}
+            max={CARD_SPACING_MAX}
+            step={1}
+            value={handSpacing}
+            onChange={(event) => onHandSpacingChange(clampCardSpacing(Number(event.target.value)))}
+            style={{ width: '100%', accentColor: '#4ade80', marginTop: 10 }}
+            aria-label="Card spacing"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => onHandSpacingChange(clampCardSpacing(handSpacing - 4))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.35)', color: '#d1d5db', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              - Tighten
+            </button>
+            <button
+              type="button"
+              onClick={() => onHandSpacingChange(clampCardSpacing(handSpacing + 4))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(74,222,128,0.28)', background: 'rgba(74,222,128,0.12)', color: '#bbf7d0', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              + Spread
+            </button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#6b7280', fontSize: 10, fontWeight: 700 }}>
+            <span>Close</span>
+            <span>Readable</span>
+          </div>
+        </div>
+
+        <div style={{ background: 'rgba(168,85,247,0.07)', border: '1px solid rgba(168,85,247,0.18)', borderRadius: 14, padding: 12 }}>
+          <p style={{ color: '#ede9fe', fontWeight: 900, fontSize: 12, margin: '0 0 10px' }}>Holding style</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {([
+              { value: 'readable' as HandStyle, label: 'Readable row' },
+              { value: 'classic' as HandStyle, label: 'Classic fan' },
+            ]).map(option => {
+              const selected = handStyle === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onHandStyleChange(option.value)}
+                  style={{
+                    padding: '8px 8px',
+                    borderRadius: 9,
+                    border: `1px solid ${selected ? 'rgba(196,181,253,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                    background: selected ? 'rgba(168,85,247,0.22)' : 'rgba(0,0,0,0.32)',
+                    color: selected ? '#ddd6fe' : '#9ca3af',
+                    fontSize: 11,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ background: 'rgba(250,204,21,0.07)', border: '1px solid rgba(250,204,21,0.18)', borderRadius: 14, padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+            <p style={{ color: '#fef3c7', fontWeight: 900, fontSize: 12, margin: 0 }}>Profile distance</p>
+            <span style={{ color: '#facc15', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{cardProfileGap}px</span>
+          </div>
+          <input
+            type="range"
+            min={CARD_PROFILE_GAP_MIN}
+            max={CARD_PROFILE_GAP_MAX}
+            step={1}
+            value={cardProfileGap}
+            onChange={(event) => onCardProfileGapChange(clampCardProfileGap(Number(event.target.value)))}
+            style={{ width: '100%', accentColor: '#facc15', marginTop: 10 }}
+            aria-label="Card to profile distance"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => onCardProfileGapChange(clampCardProfileGap(cardProfileGap - 4))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(250,204,21,0.28)', background: 'rgba(250,204,21,0.12)', color: '#fde68a', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              Pull closer
+            </button>
+            <button
+              type="button"
+              onClick={() => onCardProfileGapChange(clampCardProfileGap(cardProfileGap + 4))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.35)', color: '#d1d5db', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              Push away
+            </button>
+          </div>
+        </div>
+
+        <div style={{ background: 'rgba(14,165,233,0.07)', border: '1px solid rgba(14,165,233,0.18)', borderRadius: 14, padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+            <p style={{ color: '#dbeafe', fontWeight: 900, fontSize: 12, margin: 0 }}>Card signs</p>
+            <span style={{ color: '#60a5fa', fontFamily: 'monospace', fontSize: 12, fontWeight: 900 }}>{Math.round(cardSignScale * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={CARD_SIGN_SCALE_MIN}
+            max={CARD_SIGN_SCALE_MAX}
+            step={0.05}
+            value={cardSignScale}
+            onChange={(event) => onCardSignScaleChange(clampCardSignScale(Number(event.target.value)))}
+            style={{ width: '100%', accentColor: '#60a5fa', marginTop: 10 }}
+            aria-label="Card sign size"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => onCardSignScaleChange(clampCardSignScale(cardSignScale - 0.05))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.35)', color: '#d1d5db', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              - Smaller
+            </button>
+            <button
+              type="button"
+              onClick={() => onCardSignScaleChange(clampCardSignScale(cardSignScale + 0.05))}
+              style={{ padding: '7px 8px', borderRadius: 9, border: '1px solid rgba(96,165,250,0.28)', background: 'rgba(96,165,250,0.12)', color: '#bfdbfe', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
+            >
+              + Larger
+            </button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#6b7280', fontSize: 10, fontWeight: 700 }}>
+            <span>Small</span>
+            <span>Bold</span>
+          </div>
+        </div>
+
         {isHost && allDealt && (
-          <button onClick={onNewGame} style={{ padding: '6px 16px', borderRadius: 8, fontWeight: 900, fontSize: 12, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+          <button onClick={onNewGame} style={{ width: '100%', padding: '11px 16px', borderRadius: 12, fontWeight: 900, fontSize: 12, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', cursor: 'pointer' }}>
             🔀 New Deal
           </button>
         )}
-        <button onClick={onLeave} style={{ padding: '6px 14px', borderRadius: 8, fontWeight: 700, fontSize: 12, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
+        <button onClick={onLeave} style={{ width: '100%', marginTop: isCompactLayout ? 0 : 'auto', padding: '11px 14px', borderRadius: 12, fontWeight: 700, fontSize: 12, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
           Leave
         </button>
       </div>
+      )}
     </div>
   );
 };
@@ -797,13 +1687,41 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   const [screen, setScreen] = useState<'lobby' | 'room'>('lobby');
   const [room, setRoom] = useState<ArenaRoom | null>(null);
   const [error, setError] = useState('');
+  const [handSpacing, setHandSpacing] = useState(() => {
+    if (typeof localStorage === 'undefined') return CARD_SPACING_DEFAULT;
+    const saved = localStorage.getItem('ct-poker-hand-spacing');
+    return clampCardSpacing(saved ? Number(saved) : CARD_SPACING_DEFAULT);
+  });
+  const [cardSignScale, setCardSignScale] = useState(() => {
+    if (typeof localStorage === 'undefined') return CARD_SIGN_SCALE_DEFAULT;
+    const saved = localStorage.getItem('ct-poker-card-sign-scale');
+    return clampCardSignScale(saved ? Number(saved) : CARD_SIGN_SCALE_DEFAULT);
+  });
+  const [handStyle, setHandStyle] = useState<HandStyle>(() => {
+    if (typeof localStorage === 'undefined') return 'readable';
+    return localStorage.getItem('ct-poker-hand-style') === 'classic' ? 'classic' : 'readable';
+  });
+  const [cardProfileGap, setCardProfileGap] = useState(() => {
+    if (typeof localStorage === 'undefined') return CARD_PROFILE_GAP_DEFAULT;
+    const saved = localStorage.getItem('ct-poker-card-profile-gap');
+    return clampCardProfileGap(saved ? Number(saved) : CARD_PROFILE_GAP_DEFAULT);
+  });
   const unsubRef = useRef<(() => void) | null>(null);
+  const guestProfileRef = useRef<ArenaPlayer | null>(null);
+
+  if (!guestProfileRef.current) {
+    guestProfileRef.current = {
+      id: `guest_${Math.random().toString(36).slice(2, 8)}`,
+      name: 'Guest',
+      avatar: '',
+    };
+  }
 
   const myProfile = useMemo(() => currentUser
     ? globalPlayers.find(p => p.id === currentUser.uid) || {
         id: currentUser.uid, name: currentUser.displayName || 'Player', avatar: currentUser.photoURL || '',
       }
-    : { id: `guest_${Math.random().toString(36).slice(2,8)}`, name: 'Guest', avatar: '' },
+    : guestProfileRef.current!,
   [currentUser, globalPlayers]);
 
   const subscribeToRoom = (roomId: string) => {
@@ -816,6 +1734,26 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   };
 
   useEffect(() => () => { if (unsubRef.current) unsubRef.current(); }, []);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem('ct-poker-hand-spacing', String(handSpacing));
+  }, [handSpacing]);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem('ct-poker-card-sign-scale', String(cardSignScale));
+  }, [cardSignScale]);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem('ct-poker-hand-style', handStyle);
+  }, [handStyle]);
+
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem('ct-poker-card-profile-gap', String(cardProfileGap));
+  }, [cardProfileGap]);
 
   // Lock body scroll while arena is open
   useEffect(() => {
@@ -833,7 +1771,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
 
     const newRoom: ArenaRoom = {
       roomId, hostId: myProfile.id, players: allPlayers,
-      status: 'waiting', deck: [], hands: {}, revealedBy: [], dealStep: 0, createdAt: Date.now(),
+      status: 'waiting', deck: [], hands: {}, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, createdAt: Date.now(),
     };
     try {
       await setDoc(doc(db, ARENA_COLL, roomId), newRoom);
@@ -872,7 +1810,8 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
   const startDeal = async (r: ArenaRoom) => {
     const shuffled = shuffleDeck(buildDeck());
     const hands = dealCards(shuffled, r.players.map(p => p.id));
-    const update = { status: 'shuffling' as const, deck: shuffled, hands, revealedBy: [], dealStep: 0 };
+    const remainingDeck = getRemainingDeck(shuffled, r.players.length);
+    const update = { status: 'shuffling' as const, deck: remainingDeck, hands, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, playedCards: [], discardPile: [], capturedPiles: {}, currentTurnId: '', gameStarted: false, leadSuit: '' as const };
     const ref = doc(db, ARENA_COLL, r.roomId);
     try {
       await updateDoc(ref, update);
@@ -891,6 +1830,17 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
     const ref = doc(db, ARENA_COLL, room.roomId);
     try { await updateDoc(ref, { revealedBy: newRevealed }); }
     catch { setRoom(prev => prev ? { ...prev, revealedBy: newRevealed } : prev); }
+  };
+
+  const handleRoomUpdate = async (updates: Partial<ArenaRoom>) => {
+    if (!room) return;
+    const ref = doc(db, ARENA_COLL, room.roomId);
+    setRoom(prev => prev ? { ...prev, ...updates } : prev);
+    try {
+      await updateDoc(ref, updates);
+    } catch {
+      // Local optimistic state keeps offline/bot games responsive.
+    }
   };
 
   const handleLeave = () => { if (unsubRef.current) unsubRef.current(); setRoom(null); setScreen('lobby'); };
@@ -927,13 +1877,18 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
         )}
         {screen === 'room' && room && room.status === 'waiting' && (
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-            <WaitingRoom room={room} currentUser={currentUser}
+            <WaitingRoom room={room} myId={myProfile.id}
               onJoinAsPlayer={handleJoinAsPlayer} onStartDeal={handleStartDeal} onLeave={handleLeave} />
           </div>
         )}
         {screen === 'room' && room && (room.status === 'shuffling' || room.status === 'reveal' || room.status === 'done') && (
           <PokerTable room={room} myId={myProfile.id}
-            onReveal={handleReveal} onNewGame={handleNewGame} onLeave={handleLeave} />
+            onReveal={handleReveal} onNewGame={handleNewGame} onLeave={handleLeave}
+            onRoomUpdate={handleRoomUpdate}
+            handSpacing={handSpacing} onHandSpacingChange={setHandSpacing}
+            cardSignScale={cardSignScale} onCardSignScaleChange={setCardSignScale}
+            handStyle={handStyle} onHandStyleChange={setHandStyle}
+            cardProfileGap={cardProfileGap} onCardProfileGapChange={setCardProfileGap} />
         )}
       </div>
     </div>

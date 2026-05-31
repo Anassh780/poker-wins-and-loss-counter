@@ -790,6 +790,16 @@ export default function App() {
   const isFeaturesUnlocked = isTestingMode || globalConfig?.isPublicRelease;
 
   // ── Auth Header & Config Bar ──
+  if (showArena) {
+    return (
+      <PokerArena
+        currentUser={currentUser}
+        globalPlayers={globalPlayers}
+        onClose={() => setShowArena(false)}
+      />
+    );
+  }
+
   const renderAuthHeader = (showBack: boolean = false) => (
     <div className="sticky top-0 z-50 flex flex-col w-full shadow-lg">
       {/* Top Bar: Navigation & Auth */}
@@ -985,15 +995,6 @@ export default function App() {
 
       {/* Global Error Diagnostics */}
       <ErrorSidebar isAdmin={isAdmin} />
-
-      {/* Poker Arena Overlay — global, shows over any view */}
-      {showArena && (
-        <PokerArena
-          currentUser={currentUser}
-          globalPlayers={globalPlayers}
-          onClose={() => setShowArena(false)}
-        />
-      )}
 
       {/* Offline Alert Popup */}
       {isOffline && (

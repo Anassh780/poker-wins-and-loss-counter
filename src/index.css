@@ -406,6 +406,21 @@ body.ui-royal .card-vip {
   100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
 }
 
+@keyframes classicFanIn {
+  0% {
+    opacity: 0;
+    transform: translateY(52px) rotate(0deg) scale(0.86);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(calc(var(--fan-y, 0px) - 5px)) rotate(var(--fan-rot, 0deg)) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(var(--fan-y, 0px)) rotate(var(--fan-rot, 0deg)) scale(1);
+  }
+}
+
 @keyframes bounce {
   from { transform: translateY(0); opacity: 0.5; }
   to   { transform: translateY(-6px); opacity: 1; }
