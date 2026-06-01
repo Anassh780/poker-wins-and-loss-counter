@@ -1117,7 +1117,7 @@ const PokerTable: FC<{
     typeof window !== 'undefined' ? window.innerWidth <= 760 && window.innerHeight >= window.innerWidth : false
   ));
   const [isMobileLandscapeLayout, setIsMobileLandscapeLayout] = useState(() => (
-    typeof window !== 'undefined' ? window.innerWidth <= 980 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight : false
+    typeof window !== 'undefined' ? window.innerWidth <= 1180 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight : false
   ));
   const [controlsOpen, setControlsOpen] = useState(false);
   const [selectedCardKey, setSelectedCardKey] = useState<string | null>(null);
@@ -1132,15 +1132,15 @@ const PokerTable: FC<{
     const handleResize = () => {
       setIsCompactLayout(window.innerWidth < 980);
       setIsPortraitLayout(window.innerWidth <= 760 && window.innerHeight >= window.innerWidth);
-      setIsMobileLandscapeLayout(window.innerWidth <= 980 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight);
+      setIsMobileLandscapeLayout(window.innerWidth <= 1180 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   useEffect(() => {
-    if (isPortraitLayout) setControlsOpen(false);
-  }, [isPortraitLayout]);
+    if (isPortraitLayout || isMobileLandscapeLayout) setControlsOpen(false);
+  }, [isPortraitLayout, isMobileLandscapeLayout]);
 
   useEffect(() => {
     if (room.status === 'shuffling') {
@@ -1742,37 +1742,205 @@ const PokerTable: FC<{
   if (isMobileLandscapeLayout) {
     const myPlayer = ordered.find(player => player.id === myId);
     const opponentPlayers = ordered.filter(player => player.id !== myId);
-    const railSplit = Math.ceil(opponentPlayers.length / 2);
-    const leftRailPlayers = opponentPlayers.slice(0, railSplit);
-    const rightRailPlayers = opponentPlayers.slice(railSplit);
-    const renderRail = (players: ArenaPlayer[]) => (
-      <div style={{
-        minWidth: 108,
-        height: '100%',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        padding: '8px 6px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 7,
-        borderInline: '1px solid rgba(74,222,128,0.12)',
-        background: 'linear-gradient(180deg,rgba(0,0,0,0.55),rgba(2,19,8,0.8))',
-      }}>
-        {players.map(player => (
-          <div key={player.id} style={{
+    const renderLandscapeMySeat = (player: ArenaPlayer) => {
+      const visibleCards = getOrderedCards(player.id, getVisibleCards(player.id));
+      const dealtCards = visibleCards.slice(0, allDealt ? visibleCards.length : visibleCounts[player.id] || 0);
+      const showCards = room.revealedBy.includes(player.id) || publicRevealedBy.includes(player.id);
+      const isPacked = packedPlayerIds.includes(player.id);
+
+      return (
+        <div style={{
+          height: '100%',
+          minWidth: 0,
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1fr) 92px',
+          alignItems: 'center',
+          gap: 6,
+        }}>
+          <div style={{
+            minWidth: 0,
+            height: '100%',
+            overflowX: 'auto',
+            overflowY: 'hidden',
             display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
-            padding: '4px 2px',
-            borderRadius: 12,
-            border: player.id === currentTurnId ? '1px solid rgba(250,204,21,0.5)' : '1px solid rgba(255,255,255,0.08)',
-            background: player.id === currentTurnId ? 'rgba(250,204,21,0.09)' : 'rgba(255,255,255,0.035)',
-            boxShadow: player.id === currentTurnId ? '0 0 18px rgba(250,204,21,0.12)' : undefined,
+            paddingTop: 2,
           }}>
-            {renderPortraitOpponentSeat(player)}
+            {dealtCards.length > 0 && (
+              <div style={{
+                transform: 'scale(0.82)',
+                transformOrigin: 'center center',
+                width: 'fit-content',
+                flex: '0 0 auto',
+              }}>
+                <FanHand
+                  cards={dealtCards}
+                  faceDown={!showCards}
+                  isMe={true}
+                  handSpacing={handSpacing}
+                  cardSignScale={cardSignScale}
+                  handStyle={handStyle}
+                  selectedCardKey={selectedCardKey}
+                  canInteract={showCards && !isPacked}
+                  onCardTap={handleMyCardTap}
+                  dragEnabled={!isPacked}
+                  onReorderCards={handleReorderMyCards}
+                />
+              </div>
+            )}
           </div>
-        ))}
-      </div>
-    );
+
+          <div style={{
+            height: '100%',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 4,
+            paddingRight: 4,
+          }}>
+            <div style={{
+              width: 34,
+              height: 34,
+              borderRadius: '50%',
+              overflow: 'hidden',
+              border: '2px solid #4ade80',
+              boxShadow: '0 0 12px rgba(74,222,128,0.38)',
+              background: 'linear-gradient(135deg,#16a34a,#7c3aed)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff',
+              fontWeight: 900,
+              fontSize: 12,
+            }}>
+              {player.avatar
+                ? <img src={player.avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                : player.name[0]?.toUpperCase()}
+            </div>
+            <p style={{ color: '#4ade80', fontWeight: 900, fontSize: 9, margin: 0, lineHeight: 1 }}>YOU</p>
+            {isPacked && <span style={{ color: '#f87171', fontSize: 8, fontWeight: 900 }}>PACKED</span>}
+            {!isPacked && dealtCards.length > 0 && !showCards && (
+              <button
+                type="button"
+                onClick={onReveal}
+                style={{ width: '100%', padding: '5px 4px', borderRadius: 7, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', fontWeight: 900, fontSize: 9 }}
+              >
+                See Cards
+              </button>
+            )}
+            {!isPacked && dealtCards.length > 0 && showCards && (
+              <>
+                {!publicRevealedBy.includes(player.id) && (
+                  <button
+                    type="button"
+                    onClick={handleShowCardsPublicly}
+                    style={{ width: '100%', padding: '4px 4px', borderRadius: 7, background: 'rgba(59,130,246,0.18)', color: '#bfdbfe', border: '1px solid rgba(147,197,253,0.28)', fontWeight: 900, fontSize: 8 }}
+                  >
+                    Show
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handlePackCards}
+                  style={{ width: '100%', padding: '4px 4px', borderRadius: 7, background: 'rgba(239,68,68,0.16)', color: '#fca5a5', border: '1px solid rgba(252,165,165,0.3)', fontWeight: 900, fontSize: 8 }}
+                >
+                  Pack
+                </button>
+              </>
+            )}
+            {dealtCards.length > 0 && showCards && (
+              <span style={{ fontSize: 8, color: isMyTurn ? '#facc15' : '#86efac', fontWeight: 900, textAlign: 'center' }}>
+                {isMyTurn ? 'Your turn' : 'Ready'}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const renderLandscapeOpponentSeat = (player: ArenaPlayer) => {
+      const visibleCards = getOrderedCards(player.id, getVisibleCards(player.id));
+      const isPacked = packedPlayerIds.includes(player.id);
+      const isTurn = player.id === currentTurnId;
+      const isBot = player.isBot;
+      const levelColor = player.botLevel === 'legend' ? '#f59e0b' : player.botLevel === 'shark' ? '#3b82f6' : '#22c55e';
+
+      return (
+        <div style={{
+          width: 118,
+          minWidth: 118,
+          height: 44,
+          borderRadius: 12,
+          padding: '5px 7px',
+          display: 'grid',
+          gridTemplateColumns: '30px minmax(0,1fr)',
+          alignItems: 'center',
+          gap: 7,
+          border: isTurn ? '1px solid rgba(250,204,21,0.62)' : '1px solid rgba(255,255,255,0.1)',
+          background: isTurn ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.045)',
+          boxShadow: isTurn ? '0 0 16px rgba(250,204,21,0.18)' : undefined,
+        }}>
+          <div style={{
+            width: 30,
+            height: 30,
+            borderRadius: '50%',
+            overflow: 'hidden',
+            border: isBot ? `2px solid ${levelColor}` : '2px solid rgba(255,255,255,0.35)',
+            background: isBot ? 'linear-gradient(135deg,#1d4ed8,#7c3aed)' : 'linear-gradient(135deg,#16a34a,#7c3aed)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#fff',
+            fontWeight: 900,
+            fontSize: isBot ? 15 : 12,
+          }}>
+            {!isBot && player.avatar
+              ? <img src={player.avatar} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+              : isBot ? BOT_CONFIGS[player.botLevel || 'rookie'].emoji
+              : player.name[0]?.toUpperCase()}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <p style={{
+              margin: 0,
+              color: isTurn ? '#facc15' : isBot ? levelColor : '#38bdf8',
+              fontSize: 10,
+              fontWeight: 900,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              textShadow: '0 2px 6px rgba(0,0,0,0.8)',
+            }}>
+              {player.name}
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, minWidth: 0 }}>
+              <span style={{ color: isTurn ? '#facc15' : '#9ca3af', fontSize: 8, fontWeight: 900 }}>
+                {isPacked ? 'PACKED' : isTurn ? 'TURN' : `${visibleCards.length} cards`}
+              </span>
+              {!isPacked && (
+                <span style={{ display: 'flex', width: 38, height: 16, position: 'relative', flexShrink: 0 }}>
+                  {visibleCards.slice(0, 4).map((_, index) => (
+                    <span key={index} style={{
+                      position: 'absolute',
+                      left: index * 8,
+                      top: 0,
+                      width: 15,
+                      height: 20,
+                      borderRadius: 3,
+                      border: '1px solid rgba(255,255,255,0.75)',
+                      background: 'linear-gradient(135deg,#1d4ed8,#172554)',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+                    }} />
+                  ))}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
 
     return (
       <div style={{
@@ -1781,22 +1949,38 @@ const PokerTable: FC<{
         background: '#041105',
         position: 'relative',
         display: 'grid',
-        gridTemplateColumns: '116px minmax(0,1fr) 116px',
-        gridTemplateRows: 'minmax(0,1fr) auto',
+        gridTemplateRows: '56px minmax(0,1fr) 126px',
       }}>
-        <div style={{ gridRow: '1 / span 2', minHeight: 0 }}>{renderRail(leftRailPlayers)}</div>
+        <div style={{
+          minWidth: 0,
+          minHeight: 0,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '5px 8px',
+          borderBottom: '1px solid rgba(74,222,128,0.14)',
+          background: 'linear-gradient(180deg,rgba(0,0,0,0.72),rgba(2,19,8,0.88))',
+        }}>
+          {opponentPlayers.map(player => (
+            <div key={player.id} style={{ flex: '0 0 auto' }}>
+              {renderLandscapeOpponentSeat(player)}
+            </div>
+          ))}
+        </div>
 
-        <div style={{ position: 'relative', minWidth: 0, minHeight: 0, overflow: 'hidden', padding: 8 }}>
+        <div style={{ position: 'relative', minWidth: 0, minHeight: 0, overflow: 'hidden', padding: 6 }}>
           <div style={{
             position: 'absolute',
-            inset: '8px 10px',
+            inset: '4px 8px',
             borderRadius: '50%',
             background: 'linear-gradient(160deg,#a0714f 0%,#6b3f1f 42%,#8B5E3C 70%,#5C3A1E 100%)',
             boxShadow: '0 9px 34px rgba(0,0,0,0.78), inset 0 2px 4px rgba(255,220,150,0.15)',
           }} />
           <div style={{
             position: 'absolute',
-            inset: '24px 36px',
+            inset: '17px 34px',
             borderRadius: '50%',
             background: 'radial-gradient(ellipse at 50% 40%, #1e7a35 0%, #155c28 54%, #0e4a1e 100%)',
             boxShadow: 'inset 0 6px 28px rgba(0,0,0,0.48), inset 0 -4px 18px rgba(0,0,0,0.28)',
@@ -1814,28 +1998,31 @@ const PokerTable: FC<{
 
           <div style={{
             position: 'absolute',
-            top: '50%',
+            top: '47%',
             left: '50%',
-            transform: 'translate(-50%, -50%)',
+            transform: 'translate(-50%, -52%)',
             zIndex: 20,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: 5,
-            width: 'min(58vw, 360px)',
+            gap: 4,
+            width: 'min(78vw, 430px)',
+            pointerEvents: 'none',
           }}>
-            <DeckPile count={deckLeft} isShuffling={isShuffling} />
+            <div style={{ transform: 'scale(0.82)', transformOrigin: 'center' }}>
+              <DeckPile count={deckLeft} isShuffling={isShuffling} />
+            </div>
             {isShuffling && (
               <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 8, padding: '4px 10px', color: '#4ade80', fontWeight: 900, fontSize: 10, letterSpacing: 1.5, animation: 'pulse 0.8s infinite' }}>
                 SHUFFLING...
               </div>
             )}
             {allDealt && playedCards.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 64, marginTop: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 58, marginTop: -6 }}>
                 {playedCards.map((play, index, list) => (
                   <div key={`${play.playerId}-${play.order}`} style={{
                     position: 'relative',
-                    marginLeft: index === 0 ? 0 : -24,
+                    marginLeft: index === 0 ? 0 : -25,
                     transform: `rotate(${(index - (list.length - 1) / 2) * 6}deg)`,
                     zIndex: index + 1,
                   }}>
@@ -1861,7 +2048,7 @@ const PokerTable: FC<{
               </div>
             )}
             {allDealt && (
-              <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 10, padding: '6px 10px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 10, maxWidth: 260, textAlign: 'center' }}>
+              <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 10, padding: '5px 9px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 9, maxWidth: 300, textAlign: 'center' }}>
                 {roundComplete
                   ? winnerStatusLabel
                   : currentTrickComplete
@@ -1871,25 +2058,21 @@ const PokerTable: FC<{
                       : currentTurnPlayer
                         ? `${currentTurnPlayer.name}'s turn`
                         : `Start with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}`}
-                {playMessage && <div style={{ color: '#9ca3af', fontSize: 8, fontWeight: 700, marginTop: 2 }}>{playMessage}</div>}
               </div>
             )}
           </div>
         </div>
 
-        <div style={{ gridRow: '1 / span 2', minHeight: 0 }}>{renderRail(rightRailPlayers)}</div>
-
         <div style={{
-          gridColumn: 2,
           minWidth: 0,
-          maxHeight: '44vh',
-          padding: '0 4px max(6px, env(safe-area-inset-bottom))',
+          minHeight: 0,
+          padding: '0 8px max(5px, env(safe-area-inset-bottom))',
           borderTop: '1px solid rgba(74,222,128,0.14)',
           background: 'linear-gradient(180deg,rgba(2,19,8,0.94),rgba(0,0,0,0.82))',
           overflowX: 'auto',
           overflowY: 'auto',
         }}>
-          {myPlayer && renderPlayerSeat(myPlayer)}
+          {myPlayer && renderLandscapeMySeat(myPlayer)}
         </div>
 
         {renderWinnerCelebration()}
