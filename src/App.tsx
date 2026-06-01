@@ -7,6 +7,7 @@ import {
   PlayerControls,
   AdminEditModal,
   ErrorSidebar,
+  PokerArena,
 } from './components';
 import { ProfileModal } from './components/ProfileModal';
 import { ProfileView } from './components/ProfileView';
@@ -30,6 +31,7 @@ type View = 'setup' | 'game' | 'result';
 export default function App() {
   const [view, setView] = useState<View>('setup');
   const [appMode, setAppMode] = useState<'profile' | 'game'>('game');
+  const [showArena, setShowArena] = useState(false);
   const [playerCount, setPlayerCount] = useState<number>(2);
   const [gamePlayers, setGamePlayers] = useState<Player[]>([]);
   const [activeGamePlayers, setActiveGamePlayers] = useState<{ id: string; name: string }[]>([]);
@@ -994,6 +996,15 @@ export default function App() {
       {/* Global Error Diagnostics */}
       <ErrorSidebar isAdmin={isAdmin} />
 
+      {/* Poker Arena Overlay — global, shows over any view */}
+      {showArena && (
+        <PokerArena
+          currentUser={currentUser}
+          globalPlayers={globalPlayers}
+          onClose={() => setShowArena(false)}
+        />
+      )}
+
       {/* Offline Alert Popup */}
       {isOffline && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
@@ -1107,6 +1118,22 @@ export default function App() {
               <p className="text-gray-500 text-sm">Multiplayer Win/Loss Ranking System</p>
               <div className="h-px w-32 bg-gradient-to-r from-transparent via-cyan-500 to-transparent mx-auto mt-4" />
             </div>
+
+            {/* Poker Arena Entry Button */}
+            <button
+              onClick={() => setShowArena(true)}
+              className="w-full py-3 rounded-2xl font-black text-base tracking-widest transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95"
+              style={{
+                background: 'linear-gradient(135deg, #1a0533 0%, #2d0a5e 50%, #1a0533 100%)',
+                border: '1.5px solid rgba(168,85,247,0.5)',
+                boxShadow: '0 0 24px rgba(168,85,247,0.2), inset 0 1px 0 rgba(255,255,255,0.05)',
+                color: '#e879f9',
+              }}
+            >
+              <span style={{ fontSize: '1.4rem' }}>🃏</span>
+              <span>POKER ARENA</span>
+              <span className="text-xs font-normal opacity-60 ml-1">Deal Cards Online</span>
+            </button>
           </div>
 
           {/* Database Error Banner */}
