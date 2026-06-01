@@ -1118,7 +1118,7 @@ export default function App() {
           )}
 
           {/* Period Champions */}
-          {currentUser && (periodChampions.daily || periodChampions.weekly || periodChampions.monthly) && (
+          {false && currentUser && (periodChampions.daily || periodChampions.weekly || periodChampions.monthly) && (
             <div className="w-full max-w-2xl mb-8 animate-fade-in">
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px bg-gradient-to-r from-transparent to-yellow-500/60 flex-1 min-w-0" />
