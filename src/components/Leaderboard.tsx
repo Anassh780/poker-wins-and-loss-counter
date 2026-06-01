@@ -23,6 +23,110 @@ interface LeaderboardProps {
   activeGameSessionId?: string;
 }
 
+const WeeklyPodium = ({ players }: { players: Player[] }) => {
+  const topPlayers = players.slice(0, 3);
+  const ordered = [topPlayers[2], topPlayers[0], topPlayers[1]].filter(Boolean);
+  const meta = {
+    1: {
+      title: 'Champion',
+      metal: 'linear-gradient(160deg,rgba(255,255,255,0.2),rgba(0,0,0,0.58)),linear-gradient(180deg,#f6c955 0%,#a4640d 100%)',
+      avatarRing: 'linear-gradient(135deg,#fde68a,#b7791f)',
+      glow: 'rgba(250,204,21,0.34)',
+      height: 104,
+      avatarSize: 92,
+      lift: -18,
+    },
+    2: {
+      title: 'Runner Up',
+      metal: 'linear-gradient(160deg,rgba(255,255,255,0.2),rgba(0,0,0,0.6)),linear-gradient(180deg,#e5e7eb 0%,#667085 100%)',
+      avatarRing: 'linear-gradient(135deg,#f8fafc,#94a3b8)',
+      glow: 'rgba(226,232,240,0.2)',
+      height: 82,
+      avatarSize: 78,
+      lift: 10,
+    },
+    3: {
+      title: 'Third Place',
+      metal: 'linear-gradient(160deg,rgba(255,255,255,0.2),rgba(0,0,0,0.62)),linear-gradient(180deg,#c47a43 0%,#6f3719 100%)',
+      avatarRing: 'linear-gradient(135deg,#fb923c,#7c2d12)',
+      glow: 'rgba(180,83,9,0.22)',
+      height: 74,
+      avatarSize: 72,
+      lift: 18,
+    },
+  } as const;
+
+  if (topPlayers.length === 0) return null;
+
+  return (
+    <div className="relative mb-5 overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_50%_0%,rgba(250,204,21,0.12),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.28))] px-3 py-5 sm:px-5 sm:py-6">
+      <div className="absolute inset-x-6 bottom-4 h-16 rounded-full bg-black/40 blur-2xl" />
+      <div className="relative flex items-end justify-center gap-2 sm:gap-5" style={{ perspective: 900 }}>
+        {ordered.map((player) => {
+          const originalRank = (topPlayers.findIndex((p) => p.id === player.id) + 1) as 1 | 2 | 3;
+          const config = meta[originalRank];
+          const wr = calculateWinRate(player.wins, player.losses);
+          const games = player.wins + player.losses;
+          const avatarPx = `clamp(${config.avatarSize - 12}px, ${originalRank === 1 ? '18vw' : '15vw'}, ${config.avatarSize}px)`;
+
+          return (
+            <div
+              key={player.id}
+              className="group relative flex min-w-0 flex-1 max-w-[150px] flex-col items-center transition-transform duration-300 hover:-translate-y-2"
+              style={{
+                transform: `translateY(${config.lift}px)`,
+                transformStyle: 'preserve-3d',
+                animation: `podiumRise 0.65s cubic-bezier(.2,.9,.25,1.1) ${originalRank * 0.08}s both`,
+              }}
+            >
+              <div
+                className="relative z-20 rounded-full p-[3px] shadow-2xl"
+                style={{
+                  width: avatarPx,
+                  height: avatarPx,
+                  background: config.avatarRing,
+                  boxShadow: `0 18px 32px rgba(0,0,0,0.45), 0 0 28px ${config.glow}`,
+                }}
+              >
+                <div className="h-full w-full overflow-hidden rounded-full border border-white/25 bg-black/60">
+                  {player.avatar
+                    ? <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+                    : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-cyan-700 via-purple-800 to-black text-lg font-cyber font-black text-white">
+                        {getAvatarInitials(player.name)}
+                      </div>
+                    )
+                  }
+                </div>
+              </div>
+
+              <div
+                className="relative z-10 -mt-3 flex w-full min-w-0 flex-col justify-center overflow-hidden rounded-t-xl border border-white/10 px-2 pb-3 pt-7 text-center sm:px-3"
+                style={{
+                  minHeight: config.height,
+                  background: config.metal,
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.24), 0 20px 36px rgba(0,0,0,0.42), 0 0 24px ${config.glow}`,
+                  transform: 'rotateX(7deg)',
+                  transformOrigin: 'bottom center',
+                }}
+              >
+                <div className="absolute inset-x-0 top-0 h-5 bg-white/15" />
+                <p className="truncate font-cyber text-[10px] font-black text-white drop-shadow sm:text-xs">{player.name}</p>
+                <p className="mt-1 truncate text-[8px] font-cyber font-bold uppercase tracking-wide text-white/75 sm:text-[10px]">{config.title}</p>
+                <div className="mt-1 flex items-center justify-center gap-1 text-[9px] font-cyber font-black text-white sm:text-[10px]">
+                  <span className="text-green-200">{player.wins}W</span>
+                  <span className="text-white/35">|</span>
+                  <span className="text-purple-100">{games > 0 ? wr.toFixed(0) : 0}%</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const Leaderboard = ({
   players,
   globalPlayers,
@@ -286,6 +390,10 @@ export const Leaderboard = ({
       )}
 
       <div className="h-px w-24 sm:w-32 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full mb-4 sm:mb-5" />
+
+      {!loadingFilter && showTimeFilter && timeRange === '7d' && sorted.length > 0 && (
+        <WeeklyPodium players={sorted} />
+      )}
 
       {/* Loading state for filtered data */}
       {loadingFilter && (

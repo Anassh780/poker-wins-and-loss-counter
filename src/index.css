@@ -453,3 +453,13 @@ body.ui-royal .card-vip {
   0%   { opacity: 0.65; transform: translateY(0) rotate(-3deg); }
   100% { opacity: 1; transform: translateY(-12px) rotate(3deg); }
 }
+
+@keyframes podiumRise {
+  0%   { opacity: 0; filter: blur(2px); }
+  100% { opacity: 1; filter: blur(0); }
+}
+
+@keyframes podiumCrownFloat {
+  0%   { transform: translateX(-50%) translateY(0) scale(1); }
+  100% { transform: translateX(-50%) translateY(-5px) scale(1.04); }
+}

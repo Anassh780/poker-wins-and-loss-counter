@@ -987,6 +987,7 @@ export default function App() {
           onClose={() => setShowProfile(false)}
           onAvatarChange={handleAvatarChange}
           currentAvatar={profileAvatar}
+          isTestingMode={isTestingMode}
         />
       )}
 
@@ -1542,6 +1543,7 @@ export default function App() {
             }}
             onAvatarChange={handleAvatarChange}
             currentAvatar={profileAvatar}
+            isTestingMode={isTestingMode}
           />
         )}
       </div>

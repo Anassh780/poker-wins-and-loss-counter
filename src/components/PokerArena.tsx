@@ -26,6 +26,10 @@ interface ArenaRoom {
   winnerId?: string;
   winnerName?: string;
   winnerAvatar?: string;
+  winnerIds?: string[];
+  winnerNames?: string[];
+  loserIds?: string[];
+  loserNames?: string[];
   endedReason?: string;
 }
 
@@ -1112,6 +1116,9 @@ const PokerTable: FC<{
   const [isPortraitLayout, setIsPortraitLayout] = useState(() => (
     typeof window !== 'undefined' ? window.innerWidth <= 760 && window.innerHeight >= window.innerWidth : false
   ));
+  const [isMobileLandscapeLayout, setIsMobileLandscapeLayout] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth <= 980 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight : false
+  ));
   const [controlsOpen, setControlsOpen] = useState(false);
   const [selectedCardKey, setSelectedCardKey] = useState<string | null>(null);
   const [playMessage, setPlayMessage] = useState('');
@@ -1125,10 +1132,15 @@ const PokerTable: FC<{
     const handleResize = () => {
       setIsCompactLayout(window.innerWidth < 980);
       setIsPortraitLayout(window.innerWidth <= 760 && window.innerHeight >= window.innerWidth);
+      setIsMobileLandscapeLayout(window.innerWidth <= 980 && window.innerHeight <= 620 && window.innerWidth > window.innerHeight);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (isPortraitLayout) setControlsOpen(false);
+  }, [isPortraitLayout]);
 
   useEffect(() => {
     if (room.status === 'shuffling') {
@@ -1184,6 +1196,14 @@ const PokerTable: FC<{
   const currentTurnId = room.currentTurnId || '';
   const currentTurnPlayer = room.players.find(player => player.id === currentTurnId) || null;
   const winnerPlayer = room.winnerId ? room.players.find(player => player.id === room.winnerId) || null : null;
+  const winnerPlayers = (room.winnerIds && room.winnerIds.length > 0)
+    ? room.winnerIds.map(id => room.players.find(player => player.id === id)).filter(Boolean) as ArenaPlayer[]
+    : winnerPlayer ? [winnerPlayer] : [];
+  const winnerStatusLabel = winnerPlayers.length > 1
+    ? `${winnerPlayers.length} players win`
+    : winnerPlayers[0]
+      ? `${winnerPlayers[0].name} wins`
+      : 'Round complete';
   const isMyTurn = currentTurnId === myId;
   const leadSuit = room.leadSuit || playedCards[0]?.card.suit || '';
   const usedCardCount = playedCards.length + discardPile.length;
@@ -1357,6 +1377,10 @@ const PokerTable: FC<{
         winnerId: winner.id,
         winnerName: winner.name,
         winnerAvatar: winner.avatar,
+        winnerIds: [winner.id],
+        winnerNames: [winner.name],
+        loserIds: nextPackedPlayerIds,
+        loserNames: room.players.filter(player => nextPackedPlayerIds.includes(player.id)).map(player => player.name),
         endedReason: 'Opponent packed',
         currentTurnId: '',
         playedCards: [],
@@ -1392,7 +1416,7 @@ const PokerTable: FC<{
 
     const startingPlayer = room.players.find(player => player.id === startingPlayerId);
     setPlayMessage(startingPlayer ? `${startingPlayer.name} starts with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}` : '');
-    void onRoomUpdate({ currentTurnId: startingPlayerId, gameStarted: true, playedCards: [], discardPile: [], leadSuit: '', winnerId: '', winnerName: '', winnerAvatar: '', endedReason: '' });
+    void onRoomUpdate({ currentTurnId: startingPlayerId, gameStarted: true, playedCards: [], discardPile: [], leadSuit: '', winnerId: '', winnerName: '', winnerAvatar: '', winnerIds: [], winnerNames: [], loserIds: [], loserNames: [], endedReason: '' });
   }, [allDealt, room.currentTurnId, room.gameStarted, room.roomId]);
 
   useEffect(() => {
@@ -1429,12 +1453,16 @@ const PokerTable: FC<{
         [winner.playerId]: [...(capturedPiles[winner.playerId] || []), ...capturedCards],
       };
       const nextTotalCards = getTotalHandCards(nextHands);
-      const remainingActivePlayers = room.players.filter(player =>
-        !packedPlayerIds.includes(player.id) &&
+      const activeAfterTrick = room.players.filter(player => !packedPlayerIds.includes(player.id));
+      const zeroCardWinners = activeAfterTrick.filter(player =>
+        getRemainingCards(nextHands[player.id] || [], player.id, nextDiscardPile).length === 0
+      );
+      const cardHoldingLosers = activeAfterTrick.filter(player =>
         getRemainingCards(nextHands[player.id] || [], player.id, nextDiscardPile).length > 0
       );
-      const isGameDone = !cutReturnsToWinner && (nextDiscardPile.length >= nextTotalCards || remainingActivePlayers.length <= 1);
-      const autoWinner = isGameDone && remainingActivePlayers.length === 1 ? remainingActivePlayers[0] : null;
+      const packedLosers = room.players.filter(player => packedPlayerIds.includes(player.id));
+      const losingPlayers = [...cardHoldingLosers, ...packedLosers];
+      const isGameDone = zeroCardWinners.length > 0 || nextDiscardPile.length >= nextTotalCards;
       const winnerCanLead = getRemainingCards(nextHands[winner.playerId] || [], winner.playerId, nextDiscardPile).length > 0;
       const nextLeadPlayerId = isGameDone
         ? ''
@@ -1450,16 +1478,20 @@ const PokerTable: FC<{
         capturedPiles: nextCapturedPiles,
         currentTurnId: nextLeadPlayerId,
         leadSuit: '',
-        ...(autoWinner ? {
+        ...(isGameDone && zeroCardWinners.length > 0 ? {
           status: 'done' as const,
-          winnerId: autoWinner.id,
-          winnerName: autoWinner.name,
-          winnerAvatar: autoWinner.avatar,
-          endedReason: 'Last player with cards',
+          winnerId: zeroCardWinners[0].id,
+          winnerName: zeroCardWinners[0].name,
+          winnerAvatar: zeroCardWinners[0].avatar,
+          winnerIds: zeroCardWinners.map(player => player.id),
+          winnerNames: zeroCardWinners.map(player => player.name),
+          loserIds: losingPlayers.map(player => player.id),
+          loserNames: losingPlayers.map(player => player.name),
+          endedReason: losingPlayers.length > 0 ? 'Zero-card players win' : 'All players cleared their cards',
         } : {}),
       });
       setPlayMessage(isGameDone
-        ? autoWinner ? `${autoWinner.name} wins the round` : 'All cards played'
+        ? zeroCardWinners.length > 0 ? `${zeroCardWinners.map(player => player.name).join(', ')} win with 0 cards` : 'All cards played'
         : cutPlays.length > 0
           ? winnerCanLead
             ? `${winner.playerName} received the cut cards and leads next`
@@ -1469,6 +1501,35 @@ const PokerTable: FC<{
 
     return () => clearTimeout(timeout);
   }, [currentTrickComplete, playedCards.length, discardPile.length, leadSuit, room.roomId]);
+
+  useEffect(() => {
+    if (!allDealt || room.winnerId || playedCards.length > 0) return;
+
+    const zeroCardWinners = activePlayers.filter(player =>
+      getRemainingCards(room.hands[player.id] || [], player.id, discardPile).length === 0
+    );
+    const cardHoldingLosers = activePlayers.filter(player =>
+      getRemainingCards(room.hands[player.id] || [], player.id, discardPile).length > 0
+    );
+    const packedLosers = room.players.filter(player => packedPlayerIds.includes(player.id));
+    const losingPlayers = [...cardHoldingLosers, ...packedLosers];
+    if (zeroCardWinners.length === 0 || activePlayers.length <= 1) return;
+
+    setPlayMessage(`${zeroCardWinners.map(player => player.name).join(', ')} win with 0 cards.`);
+    void onRoomUpdate({
+      status: 'done',
+      winnerId: zeroCardWinners[0].id,
+      winnerName: zeroCardWinners[0].name,
+      winnerAvatar: zeroCardWinners[0].avatar,
+      winnerIds: zeroCardWinners.map(player => player.id),
+      winnerNames: zeroCardWinners.map(player => player.name),
+      loserIds: losingPlayers.map(player => player.id),
+      loserNames: losingPlayers.map(player => player.name),
+      endedReason: losingPlayers.length > 0 ? 'Zero-card players win' : 'All players cleared their cards',
+      currentTurnId: '',
+      leadSuit: '',
+    });
+  }, [allDealt, room.winnerId, playedCards.length, discardPile.length, room.roomId, activePlayersWithCards.length]);
 
   useEffect(() => {
     if (!allDealt || !currentTurnId || roundComplete || currentTrickComplete) return;
@@ -1542,7 +1603,9 @@ const PokerTable: FC<{
       name: room.winnerName || 'Winner',
       avatar: room.winnerAvatar || '',
     } as ArenaPlayer : null);
-    if (!winner) return null;
+    const winners = winnerPlayers.length > 0 ? winnerPlayers : winner ? [winner] : [];
+    if (winners.length === 0) return null;
+    const title = winners.length === 1 ? winners[0].name : `${winners.length} winners`;
 
     return (
       <div style={{
@@ -1596,10 +1659,19 @@ const PokerTable: FC<{
             fontSize: 28,
             boxShadow: '0 0 28px rgba(250,204,21,0.42)',
           }}>
-            {winner.avatar ? <img src={winner.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : winner.name[0]?.toUpperCase()}
+            {winners[0].avatar ? <img src={winners[0].avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : winners[0].name[0]?.toUpperCase()}
           </div>
+          {winners.length > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 6, margin: '-2px 0 8px' }}>
+              {winners.slice(0, 5).map(player => (
+                <div key={player.id} style={{ width: 26, height: 26, borderRadius: '50%', overflow: 'hidden', border: '1px solid rgba(250,204,21,0.7)', background: 'linear-gradient(135deg,#16a34a,#7c3aed)', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {player.avatar ? <img src={player.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : player.name[0]?.toUpperCase()}
+                </div>
+              ))}
+            </div>
+          )}
           <p style={{ margin: 0, color: '#facc15', fontSize: 11, fontWeight: 900, letterSpacing: 2 }}>WINNER</p>
-          <h2 style={{ margin: '4px 0 6px', color: '#f8fafc', fontSize: 22, lineHeight: 1.05 }}>{winner.name}</h2>
+          <h2 style={{ margin: '4px 0 6px', color: '#f8fafc', fontSize: 22, lineHeight: 1.05 }}>{title}</h2>
           <p style={{ margin: 0, color: '#9ca3af', fontSize: 12, fontWeight: 700 }}>{room.endedReason || 'Round complete'}</p>
         </div>
       </div>
@@ -1667,6 +1739,164 @@ const PokerTable: FC<{
     );
   };
 
+  if (isMobileLandscapeLayout) {
+    const myPlayer = ordered.find(player => player.id === myId);
+    const opponentPlayers = ordered.filter(player => player.id !== myId);
+    const railSplit = Math.ceil(opponentPlayers.length / 2);
+    const leftRailPlayers = opponentPlayers.slice(0, railSplit);
+    const rightRailPlayers = opponentPlayers.slice(railSplit);
+    const renderRail = (players: ArenaPlayer[]) => (
+      <div style={{
+        minWidth: 108,
+        height: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        padding: '8px 6px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 7,
+        borderInline: '1px solid rgba(74,222,128,0.12)',
+        background: 'linear-gradient(180deg,rgba(0,0,0,0.55),rgba(2,19,8,0.8))',
+      }}>
+        {players.map(player => (
+          <div key={player.id} style={{
+            display: 'flex',
+            justifyContent: 'center',
+            padding: '4px 2px',
+            borderRadius: 12,
+            border: player.id === currentTurnId ? '1px solid rgba(250,204,21,0.5)' : '1px solid rgba(255,255,255,0.08)',
+            background: player.id === currentTurnId ? 'rgba(250,204,21,0.09)' : 'rgba(255,255,255,0.035)',
+            boxShadow: player.id === currentTurnId ? '0 0 18px rgba(250,204,21,0.12)' : undefined,
+          }}>
+            {renderPortraitOpponentSeat(player)}
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <div style={{
+        height: '100%',
+        overflow: 'hidden',
+        background: '#041105',
+        position: 'relative',
+        display: 'grid',
+        gridTemplateColumns: '116px minmax(0,1fr) 116px',
+        gridTemplateRows: 'minmax(0,1fr) auto',
+      }}>
+        <div style={{ gridRow: '1 / span 2', minHeight: 0 }}>{renderRail(leftRailPlayers)}</div>
+
+        <div style={{ position: 'relative', minWidth: 0, minHeight: 0, overflow: 'hidden', padding: 8 }}>
+          <div style={{
+            position: 'absolute',
+            inset: '8px 10px',
+            borderRadius: '50%',
+            background: 'linear-gradient(160deg,#a0714f 0%,#6b3f1f 42%,#8B5E3C 70%,#5C3A1E 100%)',
+            boxShadow: '0 9px 34px rgba(0,0,0,0.78), inset 0 2px 4px rgba(255,220,150,0.15)',
+          }} />
+          <div style={{
+            position: 'absolute',
+            inset: '24px 36px',
+            borderRadius: '50%',
+            background: 'radial-gradient(ellipse at 50% 40%, #1e7a35 0%, #155c28 54%, #0e4a1e 100%)',
+            boxShadow: 'inset 0 6px 28px rgba(0,0,0,0.48), inset 0 -4px 18px rgba(0,0,0,0.28)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: '50%',
+              opacity: 0.04,
+              backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)',
+              backgroundSize: '6px 6px',
+            }} />
+          </div>
+
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 20,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 5,
+            width: 'min(58vw, 360px)',
+          }}>
+            <DeckPile count={deckLeft} isShuffling={isShuffling} />
+            {isShuffling && (
+              <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 8, padding: '4px 10px', color: '#4ade80', fontWeight: 900, fontSize: 10, letterSpacing: 1.5, animation: 'pulse 0.8s infinite' }}>
+                SHUFFLING...
+              </div>
+            )}
+            {allDealt && playedCards.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 64, marginTop: 2 }}>
+                {playedCards.map((play, index, list) => (
+                  <div key={`${play.playerId}-${play.order}`} style={{
+                    position: 'relative',
+                    marginLeft: index === 0 ? 0 : -24,
+                    transform: `rotate(${(index - (list.length - 1) / 2) * 6}deg)`,
+                    zIndex: index + 1,
+                  }}>
+                    <PlayingCard card={play.card} small symbolScale={cardSignScale} />
+                    {play.isCut && (
+                      <div style={{
+                        position: 'absolute',
+                        left: '50%',
+                        bottom: -12,
+                        transform: 'translateX(-50%)',
+                        borderRadius: 999,
+                        padding: '1px 5px',
+                        background: 'rgba(250,204,21,0.95)',
+                        color: '#111827',
+                        fontSize: 8,
+                        fontWeight: 900,
+                      }}>
+                        CUT
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {allDealt && (
+              <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 10, padding: '6px 10px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 10, maxWidth: 260, textAlign: 'center' }}>
+                {roundComplete
+                  ? winnerStatusLabel
+                  : currentTrickComplete
+                    ? 'Checking trick winner...'
+                    : isMyTurn
+                      ? 'Your turn: tap a card twice'
+                      : currentTurnPlayer
+                        ? `${currentTurnPlayer.name}'s turn`
+                        : `Start with ${getCardLabel({ rank: 'A', suit: SUITS[0] })}`}
+                {playMessage && <div style={{ color: '#9ca3af', fontSize: 8, fontWeight: 700, marginTop: 2 }}>{playMessage}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ gridRow: '1 / span 2', minHeight: 0 }}>{renderRail(rightRailPlayers)}</div>
+
+        <div style={{
+          gridColumn: 2,
+          minWidth: 0,
+          maxHeight: '44vh',
+          padding: '0 4px max(6px, env(safe-area-inset-bottom))',
+          borderTop: '1px solid rgba(74,222,128,0.14)',
+          background: 'linear-gradient(180deg,rgba(2,19,8,0.94),rgba(0,0,0,0.82))',
+          overflowX: 'auto',
+          overflowY: 'auto',
+        }}>
+          {myPlayer && renderPlayerSeat(myPlayer)}
+        </div>
+
+        {renderWinnerCelebration()}
+      </div>
+    );
+  }
+
   if (isPortraitLayout) {
     const myPlayer = ordered.find(player => player.id === myId);
     const opponentPlayers = ordered.filter(player => player.id !== myId);
@@ -1680,33 +1910,12 @@ const PokerTable: FC<{
         display: 'grid',
         gridTemplateRows: 'auto minmax(240px, 1fr) auto',
       }}>
-        <button
-          type="button"
-          onClick={() => setControlsOpen(true)}
-          style={{
-            position: 'absolute',
-            top: 150,
-            right: 14,
-            zIndex: 80,
-            padding: '8px 11px',
-            borderRadius: 11,
-            border: '1px solid rgba(74,222,128,0.28)',
-            background: 'rgba(0,0,0,0.74)',
-            color: '#bbf7d0',
-            fontWeight: 900,
-            fontSize: 11,
-            cursor: 'pointer',
-          }}
-        >
-          Controls
-        </button>
-
         <div style={{
           display: 'flex',
           gap: 8,
           overflowX: 'auto',
           overflowY: 'hidden',
-          padding: '10px 68px 8px 10px',
+          padding: '10px',
           borderBottom: '1px solid rgba(74,222,128,0.12)',
           background: 'linear-gradient(180deg,rgba(0,0,0,0.6),rgba(2,19,8,0.82))',
         }}>
@@ -1801,7 +2010,7 @@ const PokerTable: FC<{
             {allDealt && (
               <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 10, padding: '6px 10px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 11, maxWidth: 250, textAlign: 'center' }}>
                 {roundComplete
-                  ? winnerPlayer ? `${winnerPlayer.name} wins` : 'Round complete'
+                  ? winnerStatusLabel
                   : currentTrickComplete
                     ? 'Checking trick winner...'
                     : isMyTurn
@@ -1831,7 +2040,7 @@ const PokerTable: FC<{
           {myPlayer && renderPlayerSeat(myPlayer)}
         </div>
 
-        {controlsOpen && (
+        {!isPortraitLayout && controlsOpen && (
           <div style={{
             position: 'absolute',
             top: 8,
@@ -2026,7 +2235,7 @@ const PokerTable: FC<{
           {allDealt && (
             <div style={{ background: 'rgba(0,0,0,0.88)', borderRadius: 8, padding: '5px 12px', color: isMyTurn ? '#facc15' : '#4ade80', fontWeight: 900, fontSize: 11, maxWidth: 240, textAlign: 'center' }}>
               {roundComplete
-                ? 'Round complete'
+                ? winnerStatusLabel
                 : currentTrickComplete
                   ? 'Checking trick winner...'
                   : isMyTurn
@@ -2384,7 +2593,7 @@ export const PokerArena: FC<PokerArenaProps> = ({ currentUser, globalPlayers, on
     const shuffled = shuffleDeck(buildDeck());
     const hands = dealCards(shuffled, r.players.map(p => p.id));
     const remainingDeck = getRemainingDeck(shuffled, r.players.length);
-    const update = { status: 'shuffling' as const, deck: remainingDeck, hands, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, playedCards: [], discardPile: [], capturedPiles: {}, currentTurnId: '', gameStarted: false, leadSuit: '' as const, winnerId: '', winnerName: '', winnerAvatar: '', endedReason: '' };
+    const update = { status: 'shuffling' as const, deck: remainingDeck, hands, revealedBy: [], publicRevealedBy: [], packedPlayerIds: [], dealStep: 0, playedCards: [], discardPile: [], capturedPiles: {}, currentTurnId: '', gameStarted: false, leadSuit: '' as const, winnerId: '', winnerName: '', winnerAvatar: '', winnerIds: [], winnerNames: [], loserIds: [], loserNames: [], endedReason: '' };
     const ref = doc(db, ARENA_COLL, r.roomId);
     try {
       await updateDoc(ref, update);
