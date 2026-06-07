@@ -463,3 +463,79 @@ body.ui-royal .card-vip {
   0%   { transform: translateX(-50%) translateY(0) scale(1); }
   100% { transform: translateX(-50%) translateY(-5px) scale(1.04); }
 }
+
+.duel-win-pop {
+  animation: duelWinPop 3.6s cubic-bezier(.18,.9,.25,1.06) both;
+}
+
+.duel-selector-pop {
+  animation: duelSelectorPop .34s cubic-bezier(.18,.9,.25,1.08) both;
+}
+
+.duel-win-ring {
+  animation: duelRingPulse 1.45s ease-out infinite;
+}
+
+.duel-win-ring-delayed {
+  animation-delay: .38s;
+}
+
+.duel-avatar-ring {
+  animation: duelAvatarPulse 1.2s ease-in-out infinite alternate;
+}
+
+.duel-orbit-core {
+  animation: duelCoreFloat 2.2s ease-in-out infinite alternate;
+}
+
+.duel-orbit-button {
+  animation: duelOrbitIn .42s cubic-bezier(.18,.9,.25,1.08) both;
+}
+
+.duel-orbit-button:nth-of-type(2) { animation-delay: .04s; }
+.duel-orbit-button:nth-of-type(3) { animation-delay: .08s; }
+.duel-orbit-button:nth-of-type(4) { animation-delay: .12s; }
+.duel-orbit-button:nth-of-type(5) { animation-delay: .16s; }
+.duel-orbit-button:nth-of-type(6) { animation-delay: .2s; }
+
+@keyframes duelWinPop {
+  0%   { opacity: 0; transform: scale(.62) rotate(-10deg); filter: blur(5px); }
+  13%  { opacity: 1; transform: scale(1.05) rotate(2deg); filter: blur(0); }
+  22%  { transform: scale(1) rotate(0); }
+  82%  { opacity: 1; transform: scale(1) rotate(0); }
+  100% { opacity: 0; transform: scale(.86) translateY(-24px); }
+}
+
+@keyframes duelSelectorPop {
+  0%   { opacity: 0; transform: scale(.72) rotate(-5deg); filter: blur(4px); }
+  70%  { opacity: 1; transform: scale(1.025) rotate(1deg); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+@keyframes duelRingPulse {
+  0%   { opacity: .95; transform: scale(.82); box-shadow: 0 0 0 0 rgba(0,217,255,.22); }
+  70%  { opacity: .08; transform: scale(1.08); box-shadow: 0 0 0 22px rgba(0,217,255,0); }
+  100% { opacity: 0; transform: scale(1.14); }
+}
+
+@keyframes duelAvatarPulse {
+  0%   { transform: translateY(0) scale(1); }
+  100% { transform: translateY(-4px) scale(1.035); }
+}
+
+@keyframes duelCoreFloat {
+  0%   { filter: brightness(1); }
+  100% { filter: brightness(1.12); }
+}
+
+@keyframes duelOrbitIn {
+  0%   { opacity: 0; filter: blur(4px); }
+  100% { opacity: 1; filter: blur(0); }
+}
+
+@media (max-width: 460px) {
+  .duel-orbit-button {
+    min-width: 86px;
+    min-height: 86px;
+  }
+}

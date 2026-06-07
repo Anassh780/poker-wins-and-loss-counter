@@ -10,6 +10,20 @@ export interface Player {
   likes?: number;
   dislikes?: number;
   isCertified?: boolean;
+  isBanned?: boolean;
+  banGamesRemaining?: number;
+  banReason?: string;
+  bannedAt?: number;
+  merit?: number;
+  rulesSignedAt?: number;
+  lastDuel?: {
+    opponentId: string;
+    opponentName: string;
+    opponentAvatar: string;
+    result: 'win' | 'loss';
+    timestamp: number;
+    sessionId: string;
+  };
 }
 
 export interface GameSession {

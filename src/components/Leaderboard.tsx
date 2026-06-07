@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials, copyDOMElementToClipboard } from '../utils/imageExport';
 import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
+
+const WEEKLY_PODIUM_MIN_GAMES = 80;
+type PlayerQuickAction = 'ban' | 'unban' | 'merit';
 
 interface LeaderboardProps {
   players: Player[];
@@ -12,6 +15,7 @@ interface LeaderboardProps {
   isAdmin?: boolean;
   canEditPlayers?: boolean;
   onAdminEdit?: (player: Player, timeRange: TimeRange) => void;
+  onPlayerQuickAction?: (player: Player, action: PlayerQuickAction) => void | Promise<void>;
   showTimeFilter?: boolean;
   isTestingMode?: boolean;
   isGameActive?: boolean;
@@ -23,7 +27,7 @@ interface LeaderboardProps {
   activeGameSessionId?: string;
 }
 
-const WeeklyPodium = ({ players }: { players: Player[] }) => {
+const WeeklyPodium = ({ players, minGames }: { players: Player[]; minGames: number }) => {
   const topPlayers = players.slice(0, 3);
   const ordered = [topPlayers[2], topPlayers[0], topPlayers[1]].filter(Boolean);
   const meta = {
@@ -56,7 +60,16 @@ const WeeklyPodium = ({ players }: { players: Player[] }) => {
     },
   } as const;
 
-  if (topPlayers.length === 0) return null;
+  if (topPlayers.length === 0) {
+    return (
+      <div className="mb-5 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-5 text-center">
+        <p className="font-cyber text-xs font-black uppercase tracking-[0.2em] text-amber-200">Weekly podium locked</p>
+        <p className="mt-2 text-[11px] font-semibold text-amber-100/70">
+          Players need {minGames}+ games in the 7-day board to qualify for the top spots.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="relative mb-5 overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_50%_0%,rgba(250,204,21,0.12),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.28))] px-3 py-5 sm:px-5 sm:py-6">
@@ -118,6 +131,7 @@ const WeeklyPodium = ({ players }: { players: Player[] }) => {
                   <span className="text-white/35">|</span>
                   <span className="text-purple-100">{games > 0 ? wr.toFixed(0) : 0}%</span>
                 </div>
+                <p className="mt-1 text-[8px] font-cyber font-bold uppercase tracking-wide text-white/55">{games} GP</p>
               </div>
             </div>
           );
@@ -134,6 +148,7 @@ export const Leaderboard = ({
   isAdmin,
   canEditPlayers,
   onAdminEdit,
+  onPlayerQuickAction,
   showTimeFilter = false,
   isTestingMode = false,
   isGameActive = false,
@@ -154,6 +169,9 @@ export const Leaderboard = ({
   const [clickCoords, setClickCoords] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
   const [hasVotedCurrentSession, setHasVotedCurrentSession] = useState<Record<string, 'like' | 'dislike'>>({});
+  const [actionSheetPlayer, setActionSheetPlayer] = useState<Player | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -191,6 +209,11 @@ export const Leaderboard = ({
   const isMobile = windowWidth < 640;
 
   const handleRowClick = (e: React.MouseEvent, player: Player) => {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const container = document.getElementById('export-leaderboard');
     const containerRect = container ? container.getBoundingClientRect() : { top: 0, left: 0 };
@@ -202,6 +225,54 @@ export const Leaderboard = ({
       height: rect.height
     });
   };
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearLongPressTimer, []);
+
+  const startPlayerLongPress = (player: Player) => {
+    if (!isAdmin || !onPlayerQuickAction) return;
+    clearLongPressTimer();
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      setActionSheetPlayer(player);
+    }, 520);
+  };
+
+  const openPlayerActionSheet = (event: React.MouseEvent, player: Player) => {
+    if (!isAdmin || !onPlayerQuickAction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearLongPressTimer();
+    longPressTriggeredRef.current = true;
+    setActionSheetPlayer(player);
+  };
+
+  const runPlayerQuickAction = async (action: PlayerQuickAction) => {
+    if (!actionSheetPlayer || !onPlayerQuickAction) return;
+    await onPlayerQuickAction(actionSheetPlayer, action);
+    setActionSheetPlayer(null);
+  };
+
+  const getLongPressHandlers = (player: Player) => (
+    isAdmin && onPlayerQuickAction
+      ? {
+          onMouseDown: () => startPlayerLongPress(player),
+          onMouseUp: clearLongPressTimer,
+          onMouseLeave: clearLongPressTimer,
+          onTouchStart: () => startPlayerLongPress(player),
+          onTouchEnd: clearLongPressTimer,
+          onTouchCancel: clearLongPressTimer,
+          onContextMenu: (event: React.MouseEvent) => openPlayerActionSheet(event, player),
+        }
+      : {}
+  );
 
   // Fetch filtered data when time range changes (only when not 'all')
   useEffect(() => {
@@ -280,14 +351,27 @@ export const Leaderboard = ({
     ? filteredPlayers.map((p) => ({ ...p, sessionWins: 0, sessionLosses: 0 }))
     : players;
 
-  const getSorted = () => {
-    const list = [...activePlayers];
+  const getGamesPlayed = (player: Pick<Player, 'wins' | 'losses'>) => player.wins + player.losses;
+  const isWeeklyRange = showTimeFilter && timeRange === '7d';
+  const isWeeklyEligible = (player: Pick<Player, 'wins' | 'losses'>) => getGamesPlayed(player) >= WEEKLY_PODIUM_MIN_GAMES;
+
+  const sortPlayerList = (list: Player[]) => {
     if (sortMethod === 'winRate') return list.sort((a, b) => calculateWinRate(b.wins, b.losses) - calculateWinRate(a.wins, a.losses));
     if (sortMethod === 'matches') return list.sort((a, b) => (b.wins + b.losses) - (a.wins + a.losses));
     return list.sort((a, b) => b.wins - a.wins);
   };
 
+  const getSorted = () => {
+    const sortedPlayers = sortPlayerList([...activePlayers]);
+    if (!isWeeklyRange) return sortedPlayers;
+
+    const eligible = sortedPlayers.filter(isWeeklyEligible);
+    const notEligible = sortedPlayers.filter((player) => !isWeeklyEligible(player));
+    return [...eligible, ...notEligible];
+  };
+
   const sorted = getSorted();
+  const weeklyPodiumPlayers = isWeeklyRange ? sorted.filter(isWeeklyEligible) : sorted;
 
   const rowBg = (rank: number) => {
     if (rank === 1) return { bg: 'rgba(250,204,21,0.07)', border: '3px solid rgba(250,204,21,0.3)', shadow: 'inset 4px 0 20px rgba(250,204,21,0.12)' };
@@ -392,7 +476,7 @@ export const Leaderboard = ({
       <div className="h-px w-24 sm:w-32 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full mb-4 sm:mb-5" />
 
       {!loadingFilter && showTimeFilter && timeRange === '7d' && sorted.length > 0 && (
-        <WeeklyPodium players={sorted} />
+        <WeeklyPodium players={weeklyPodiumPlayers} minGames={WEEKLY_PODIUM_MIN_GAMES} />
       )}
 
       {/* Loading state for filtered data */}
@@ -434,12 +518,30 @@ export const Leaderboard = ({
           const rank = idx + 1;
           const wr   = calculateWinRate(player.wins, player.losses);
           const gp   = player.wins + player.losses;
+          const isWeeklyIneligible = isWeeklyRange && gp < WEEKLY_PODIUM_MIN_GAMES;
+          const displayRank = isWeeklyIneligible ? 999 : rank;
+          const gamesNeeded = Math.max(0, WEEKLY_PODIUM_MIN_GAMES - gp);
           const playerNameLower = player.name.toLowerCase().trim();
           const isCountingRow = isGameActive && (
             activeGamePlayerIds?.includes(player.id) ||
             activeGamePlayerNames?.includes(playerNameLower)
           );
-          const s    = rowBg(rank);
+          const isBanned = !!player.isBanned;
+          const banGamesRemaining = player.banGamesRemaining || 0;
+          const s    = rowBg(displayRank);
+          const rankNode = isWeeklyIneligible
+            ? <span className="font-cyber font-bold text-xs sm:text-sm" style={{ color: 'rgba(250,204,21,0.55)' }}>#{rank}</span>
+            : rankDisplay(rank);
+          const weeklyEligibilityNode = isWeeklyIneligible ? (
+            <div className="mx-auto flex w-12 flex-col items-center gap-1" title={`${gamesNeeded} more games needed for weekly top`}>
+              <span className="font-cyber text-[9px] font-black leading-none text-amber-300">{gp}/{WEEKLY_PODIUM_MIN_GAMES}</span>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-amber-950/70">
+                <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-cyan-300" style={{ width: `${Math.min(100, (gp / WEEKLY_PODIUM_MIN_GAMES) * 100)}%` }} />
+              </div>
+            </div>
+          ) : (
+            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp}</span>
+          );
 
           return (
             <div key={player.id}
@@ -449,24 +551,32 @@ export const Leaderboard = ({
 
               {/* ── Desktop row */}
               <div className="hidden sm:grid grid-cols-12 gap-2 px-4 py-3.5 items-center relative">
-                <div className="col-span-1 flex justify-center">{rankDisplay(rank)}</div>
+                <div className="col-span-1 flex justify-center">{rankNode}</div>
                 <div className="col-span-4 flex items-center gap-3">
                   <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border"
-                    style={{ borderColor: rank <= 3 ? 'rgba(250,204,21,0.3)' : 'rgba(0,217,255,0.25)', boxShadow: rank <= 3 ? '0 0 10px rgba(250,204,21,0.2)' : '0 0 8px rgba(0,217,255,0.1)' }}>
+                    style={{ borderColor: displayRank <= 3 ? 'rgba(250,204,21,0.3)' : 'rgba(0,217,255,0.25)', boxShadow: displayRank <= 3 ? '0 0 10px rgba(250,204,21,0.2)' : '0 0 8px rgba(0,217,255,0.1)' }}>
                     {player.avatar
                       ? <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />
                       : <div className="w-full h-full flex items-center justify-center text-sm font-cyber font-black text-white"
-                          style={{ background: rank <= 3 ? 'linear-gradient(135deg,#b45309,#78350f)' : 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
+                          style={{ background: displayRank <= 3 ? 'linear-gradient(135deg,#b45309,#78350f)' : 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
                           {getAvatarInitials(player.name)}
                         </div>
                     }
                   </div>
-                  <div className="flex items-center gap-1.5 min-w-0">
+                  <div
+                    className="flex items-center gap-1.5 min-w-0"
+                    {...getLongPressHandlers(player)}
+                    title={isAdmin && onPlayerQuickAction ? 'Long press for player actions' : undefined}
+                  >
                     <p className="font-cyber font-bold text-base truncate"
-                      style={{ color: rank === 1 ? '#fde68a' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fdba74' : '#67e8f9' }}>
+                      style={{ color: displayRank === 1 ? '#fde68a' : displayRank === 2 ? '#e2e8f0' : displayRank === 3 ? '#fdba74' : isWeeklyIneligible ? '#9ca3af' : '#67e8f9' }}>
                       {player.name}
                     </p>
-                    {isCountingRow && (
+                    {isBanned ? (
+                      <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.18em] text-red-300 bg-red-500/12 border border-red-400/35 rounded-full px-2 py-0.5 shadow-[0_0_10px_rgba(248,113,113,0.16)]">
+                        BANNED{banGamesRemaining > 0 ? ` ${banGamesRemaining}G` : ''}
+                      </span>
+                    ) : isCountingRow && (
                       <span className="text-[10px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
                         PLAYING
                       </span>
@@ -492,7 +602,7 @@ export const Leaderboard = ({
                   </div>
                 </div>
                 <div className="col-span-1 text-center">
-                  <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp}</span>
+                  {weeklyEligibilityNode}
                 </div>
                 {isAdmin && canEditPlayers !== false && (
                   <div className="absolute right-4 cursor-pointer" onClick={(e) => { e.stopPropagation(); onAdminEdit?.(player, timeRange); }}>
@@ -503,22 +613,30 @@ export const Leaderboard = ({
 
               {/* ── Mobile row (compact) */}
               <div className="flex sm:hidden items-center gap-1.5 px-2 py-2.5">
-                <div className="w-6 flex-shrink-0 flex justify-center">{rankDisplay(rank)}</div>
+                <div className="w-6 flex-shrink-0 flex justify-center">{rankNode}</div>
                 <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0"
-                  style={{ border: `1px solid ${rank <= 3 ? 'rgba(250,204,21,0.3)' : 'rgba(0,217,255,0.2)'}` }}>
+                  style={{ border: `1px solid ${displayRank <= 3 ? 'rgba(250,204,21,0.3)' : 'rgba(0,217,255,0.2)'}` }}>
                   {player.avatar
                     ? <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />
                     : <div className="w-full h-full flex items-center justify-center text-[10px] font-cyber font-black text-white"
-                        style={{ background: rank <= 3 ? 'linear-gradient(135deg,#b45309,#78350f)' : 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
+                        style={{ background: displayRank <= 3 ? 'linear-gradient(135deg,#b45309,#78350f)' : 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
                         {getAvatarInitials(player.name)}
                       </div>
                   }
                 </div>
                 <div className="flex-1 min-w-0 pr-1">
-                  <div className="flex items-center gap-1">
+                  <div
+                    className="flex items-center gap-1"
+                    {...getLongPressHandlers(player)}
+                    title={isAdmin && onPlayerQuickAction ? 'Long press for player actions' : undefined}
+                  >
                     <p className="font-cyber font-bold text-[11px] truncate"
-                      style={{ color: rank === 1 ? '#fde68a' : rank <= 3 ? '#fdba74' : '#67e8f9' }}>{player.name}</p>
-                    {isCountingRow && (
+                      style={{ color: displayRank === 1 ? '#fde68a' : displayRank <= 3 ? '#fdba74' : isWeeklyIneligible ? '#9ca3af' : '#67e8f9' }}>{player.name}</p>
+                    {isBanned ? (
+                      <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.18em] text-red-300 bg-red-500/12 border border-red-400/35 rounded-full px-2 py-0.5 shadow-[0_0_8px_rgba(248,113,113,0.14)]">
+                        BANNED{banGamesRemaining > 0 ? ` ${banGamesRemaining}G` : ''}
+                      </span>
+                    ) : isCountingRow && (
                       <span className="text-[8px] font-cyber font-bold uppercase tracking-[0.2em] text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 shadow-[0_0_8px_rgba(34,197,94,0.15)]">
                         PLAYING
                       </span>
@@ -531,7 +649,9 @@ export const Leaderboard = ({
                       </span>
                     )}
                   </div>
-                  <p className="text-[8px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>{gp} games</p>
+                  <p className="text-[8px] mt-0.5" style={{ color: isWeeklyIneligible ? 'rgba(250,204,21,0.62)' : 'rgba(255,255,255,0.3)' }}>
+                    {isWeeklyIneligible ? `${gp}/${WEEKLY_PODIUM_MIN_GAMES} weekly games` : `${gp} games`}
+                  </p>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 text-right items-center">
                   <div className="w-6">
@@ -569,6 +689,52 @@ export const Leaderboard = ({
         </div>
       )}
 
+      {actionSheetPlayer && (
+        <div
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/45 px-3 pb-5 backdrop-blur-sm sm:items-center sm:pb-0"
+          onClick={() => setActionSheetPlayer(null)}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-[28px] border border-white/12 bg-[#101426]/95 p-2 shadow-[0_24px_70px_rgba(0,0,0,0.55)] animate-slide-up"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="px-4 py-3 text-center">
+              <p className="truncate font-cyber text-sm font-black text-white">{actionSheetPlayer.name}</p>
+              <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">Admin player actions</p>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-white/8 bg-black/30">
+              <button
+                onClick={() => runPlayerQuickAction('ban')}
+                className="flex w-full items-center justify-between border-b border-white/8 px-4 py-3 text-left text-sm font-bold text-red-300 transition-colors hover:bg-red-500/10"
+              >
+                <span>Ban for 2 games</span>
+                <span className="text-[10px] uppercase tracking-widest text-red-300/65">Violation</span>
+              </button>
+              <button
+                onClick={() => runPlayerQuickAction('unban')}
+                className="flex w-full items-center justify-between border-b border-white/8 px-4 py-3 text-left text-sm font-bold text-green-300 transition-colors hover:bg-green-500/10"
+              >
+                <span>Unban</span>
+                <span className="text-[10px] uppercase tracking-widest text-green-300/65">Manual</span>
+              </button>
+              <button
+                onClick={() => runPlayerQuickAction('merit')}
+                className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-cyan-300 transition-colors hover:bg-cyan-500/10"
+              >
+                <span>Restore merit +5</span>
+                <span className="text-[10px] uppercase tracking-widest text-cyan-300/65">Recommended</span>
+              </button>
+            </div>
+            <button
+              onClick={() => setActionSheetPlayer(null)}
+              className="mt-2 w-full rounded-2xl border border-white/8 bg-white/8 px-4 py-3 text-sm font-black text-white transition-colors hover:bg-white/12"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Advanced Profile Preview Modal */}
       {previewPlayer && (() => {
         const pRank = sorted.findIndex(p => p.id === previewPlayer.id) + 1;
@@ -577,9 +743,17 @@ export const Leaderboard = ({
           ...globalPlayer,
           likes: previewPlayer.likes !== undefined ? previewPlayer.likes : globalPlayer.likes,
           dislikes: previewPlayer.dislikes !== undefined ? previewPlayer.dislikes : globalPlayer.dislikes,
+          merit: previewPlayer.merit !== undefined ? previewPlayer.merit : globalPlayer.merit,
+          isBanned: previewPlayer.isBanned !== undefined ? previewPlayer.isBanned : globalPlayer.isBanned,
+          banGamesRemaining: previewPlayer.banGamesRemaining !== undefined ? previewPlayer.banGamesRemaining : globalPlayer.banGamesRemaining,
+          lastDuel: previewPlayer.lastDuel || globalPlayer.lastDuel,
         };
         const gp = mergedPlayer.wins + mergedPlayer.losses;
         const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
+        const previewPeriodGp = previewPlayer.wins + previewPlayer.losses;
+        const previewGamesNeeded = Math.max(0, WEEKLY_PODIUM_MIN_GAMES - previewPeriodGp);
+        const previewIsWeeklyIneligible = isWeeklyRange && previewPeriodGp < WEEKLY_PODIUM_MIN_GAMES;
+        const lastDuel = mergedPlayer.lastDuel;
         const previewPlayerNameLower = previewPlayer.name.toLowerCase().trim();
         const isCountingMode = !!(isGameActive && (
           activeGamePlayerIds?.includes(previewPlayer.id) ||
@@ -587,11 +761,13 @@ export const Leaderboard = ({
         ));
         const rating = Math.max(0, ((mergedPlayer.likes || 0) - (mergedPlayer.dislikes || 0)) * 0.2);
         const isSelf = currentUserId === previewPlayer.id;
+        const previewIsBanned = !!mergedPlayer.isBanned;
+        const previewMerit = mergedPlayer.merit ?? 100;
 
         let cardStyle: React.CSSProperties = {};
         if (clickCoords && !isMobile) {
           const cardWidth = 320;
-          const cardHeight = 490; // slightly taller to accommodate the new voting controls and rating bars
+          const cardHeight = 520;
 
           // Center the card vertically relative to the clicked row
           let top = clickCoords.top + clickCoords.height / 2 - cardHeight / 2;
@@ -616,7 +792,7 @@ export const Leaderboard = ({
 
         const renderCardInterior = () => (
           <div
-            className="pointer-events-auto w-[320px] h-[490px] rounded-[32px] overflow-hidden border border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.6)] flex flex-col relative animate-slide-up bg-[#0d0a21]"
+            className="pointer-events-auto w-[320px] h-[520px] rounded-[32px] overflow-hidden border border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.6)] flex flex-col relative animate-slide-up bg-[#0d0a21]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Background image / placeholder */}
@@ -636,11 +812,16 @@ export const Leaderboard = ({
 
             {/* Cloud Verified rank badge at the top */}
             <div className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[10px] font-cyber font-bold tracking-wider text-cyan-400">
-              RANK #{pRank}
+              {previewIsWeeklyIneligible ? `NEEDS ${previewGamesNeeded} GP` : `RANK #${pRank}`}
             </div>
+            {previewIsBanned && (
+              <div className="absolute top-4 right-4 z-10 rounded-full border border-red-400/35 bg-red-500/15 px-3 py-1 text-[10px] font-cyber font-bold tracking-wider text-red-300 backdrop-blur-md">
+                BANNED{mergedPlayer.banGamesRemaining ? ` ${mergedPlayer.banGamesRemaining}G` : ''}
+              </div>
+            )}
 
             {/* Bottom glass stats card */}
-            <div className="absolute bottom-0 inset-x-0 bg-white/[0.07] backdrop-blur-2xl border-t border-white/15 rounded-t-3xl rounded-b-[32px] p-5 z-10 flex flex-col gap-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+            <div className="absolute bottom-0 inset-x-0 bg-white/[0.07] backdrop-blur-2xl border-t border-white/15 rounded-t-3xl rounded-b-[32px] p-5 z-10 flex flex-col gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
               {/* Name + cloud verified rosette */}
               <div className="flex items-center gap-1.5 min-w-0">
                 <h3 className="font-cyber font-black text-xl text-white truncate drop-shadow-sm">{previewPlayer.name}</h3>
@@ -655,7 +836,9 @@ export const Leaderboard = ({
 
               {/* Personalized tagline */}
               <p className="text-white/80 text-xs font-sans leading-relaxed font-medium">
-                {gp > 0 
+                {previewIsWeeklyIneligible
+                  ? `${previewGamesNeeded} more weekly games needed before ${previewPlayer.name} can enter the 7-day top.`
+                  : gp > 0 
                   ? `Rank #${pRank} • ${wr >= 60 ? 'Master' : wr >= 50 ? 'Elite' : 'Rising'} Contender with a ${wr.toFixed(1)}% win rate across ${gp} matches.`
                   : `Rank #${pRank} • Global Contender. Ready to play their first match!`
                 }
@@ -668,7 +851,11 @@ export const Leaderboard = ({
                     <span className="text-[8px] uppercase tracking-wider text-purple-300 font-cyber font-bold">Player Rating</span>
                     <span className="text-sm font-cyber font-black text-white">{rating.toFixed(1)}%</span>
                   </div>
-                  {isCountingMode && (
+                  {previewIsBanned ? (
+                    <div className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-red-300 shadow-[0_0_10px_rgba(248,113,113,0.15)]">
+                      <span>BANNED</span>
+                    </div>
+                  ) : isCountingMode && (
                     <div className="inline-flex items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-[9px] font-cyber font-bold uppercase tracking-[0.18em] text-green-400 shadow-[0_0_10px_rgba(34,197,94,0.15)]">
                       <span>⏱️</span>
                       <span>PLAYING</span>
@@ -678,6 +865,38 @@ export const Leaderboard = ({
                 <div className="w-28 bg-white/10 h-1.5 rounded-full overflow-hidden">
                   <div className="bg-gradient-to-r from-purple-500 to-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, rating)}%` }} />
                 </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-cyan-400/15 bg-cyan-400/10 px-3 py-2">
+                  <span className="text-[9px] font-cyber font-black uppercase tracking-[0.16em] text-cyan-200">Fair Play Merit</span>
+                  <span className={`font-cyber text-sm font-black ${previewMerit >= 80 ? 'text-green-300' : previewMerit >= 60 ? 'text-amber-300' : 'text-red-300'}`}>
+                    {previewMerit}
+                  </span>
+                </div>
+
+                {lastDuel && (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/10 px-2.5 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="h-7 w-7 flex-shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/60">
+                        {lastDuel.opponentAvatar ? (
+                          <img src={lastDuel.opponentAvatar} alt={lastDuel.opponentName} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[10px] font-cyber font-black text-white">
+                            {getAvatarInitials(lastDuel.opponentName)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 text-left">
+                        <p className="truncate text-[9px] font-cyber font-black uppercase tracking-[0.14em] text-cyan-200">Latest 1v1</p>
+                        <p className="truncate text-[11px] font-bold text-white/85">
+                          {lastDuel.result === 'win' ? 'Beat' : 'Lost to'} {lastDuel.opponentName}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[9px] font-cyber font-black uppercase ${lastDuel.result === 'win' ? 'bg-green-500/15 text-green-300' : 'bg-red-500/15 text-red-300'}`}>
+                      {lastDuel.result}
+                    </span>
+                  </div>
+                )}
 
                 {(onVotePlayer && isCountingMode && wr >= 85) ? (
                   <div className="flex flex-col gap-1 mt-1">

@@ -1,5 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  getAuth,
+  getRedirectResult,
+  GoogleAuthProvider,
+  setPersistence,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from 'firebase/auth';
 import { getFirestore, collection } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -20,7 +29,29 @@ export const storage = getStorage(app);
 
 // Auth Helpers
 export const provider = new GoogleAuthProvider();
-export const loginWithGoogle = () => signInWithPopup(auth, provider);
+provider.setCustomParameters({ prompt: 'select_account' });
+
+const POPUP_FALLBACK_ERRORS = new Set([
+  'auth/popup-blocked',
+  'auth/cancelled-popup-request',
+  'auth/operation-not-supported-in-this-environment',
+]);
+
+export const loginWithGoogle = async () => {
+  await setPersistence(auth, browserLocalPersistence);
+
+  try {
+    return await signInWithPopup(auth, provider);
+  } catch (error: any) {
+    if (POPUP_FALLBACK_ERRORS.has(error?.code)) {
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+    throw error;
+  }
+};
+
+export const handleGoogleRedirectResult = () => getRedirectResult(auth);
 export const logout = () => signOut(auth);
 
 // Firestore Collections Reference

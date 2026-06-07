@@ -5,10 +5,20 @@ import { getUnlockedAchievements, ACHIEVEMENTS } from '../data/achievements';
 import { RecoveryPanel } from './RecoveryPanel';
 import { AdminManagement } from './AdminManagement';
 import { uploadAvatar, db } from '../lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import type { AdminPermissions } from './AdminManagement';
 
 import type { Player } from '../types';
+
+const DEFAULT_MERIT = 100;
+const FAIR_PLAY_RULES = [
+  "Don't help any other player",
+  "Hinting or giving clues about your cards isn't allowed",
+  "Giving favor assuming as a teammate isn't allowed",
+  "Changing cards is also not allowed",
+];
+
+type ProfileTab = 'profile' | 'avatars' | 'achievements' | 'arcade' | 'rules' | 'admin' | 'manage_admins';
 
 interface ProfileViewProps {
   user: User;
@@ -47,10 +57,11 @@ export const ProfileView = ({
   activeUsersColl,
   isTestingMode,
 }: ProfileViewProps) => {
-  const [tab, setTab] = useState<'profile' | 'avatars' | 'achievements' | 'arcade' | 'admin' | 'manage_admins'>('profile');
+  const [tab, setTab] = useState<ProfileTab>('profile');
   const [selectedCategory, setSelectedCategory] = useState(AVATAR_CATEGORIES[0]);
   const [newBetaEmail, setNewBetaEmail] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [signingRules, setSigningRules] = useState(false);
   const [receivedVotes, setReceivedVotes] = useState<{
     id: string;
     voterName: string;
@@ -84,6 +95,8 @@ export const ProfileView = ({
   const gp = wins + losses;
   const winRate = gp > 0 ? ((wins / gp) * 100).toFixed(1) : '0';
   const unlocked = getUnlockedAchievements(wins, losses);
+  const merit = myStats?.merit ?? DEFAULT_MERIT;
+  const rulesSignedAt = myStats?.rulesSignedAt || 0;
 
   useEffect(() => {
     const targetId = myStats?.id || user.uid;
@@ -122,7 +135,24 @@ export const ProfileView = ({
     onUpdateBetaEmails(remoteBetaEmails.filter((e) => e !== emailToRemove));
   };
 
-  const tabs: { key: typeof tab; icon: string; label: string; adminOnly?: boolean; mainOnly?: boolean }[] = [
+  const handleSignRules = async () => {
+    const playerId = myStats?.id || user.uid;
+    setSigningRules(true);
+    try {
+      await setDoc(doc(activeUsersColl, playerId), {
+        id: playerId,
+        name: myStats?.name || user.displayName || 'Player',
+        avatar: myStats?.avatar || currentAvatar || user.photoURL || '',
+        merit,
+        rulesSignedAt: Date.now(),
+      }, { merge: true });
+    } finally {
+      setSigningRules(false);
+    }
+  };
+
+  const tabs: { key: ProfileTab; icon: string; label: string; adminOnly?: boolean; mainOnly?: boolean }[] = [
+    { key: 'rules', icon: '⚖️', label: 'Fair Play' },
     { key: 'profile', icon: '📊', label: 'Dashboard' },
     { key: 'avatars', icon: '🎭', label: 'Avatar Gallery' },
     { key: 'achievements', icon: '🏅', label: 'Achievements' },
@@ -228,6 +258,7 @@ export const ProfileView = ({
                   color: 'text-purple-400',
                 },
                 { value: gp, label: 'Games Played', color: 'text-cyan-400' },
+                { value: merit, label: 'Fair Play Merit', color: merit >= 80 ? 'text-green-400' : merit >= 60 ? 'text-yellow-400' : 'text-red-400' },
               ].map(({ value, label, color }) => (
                 <div
                   key={label}
@@ -417,6 +448,74 @@ export const ProfileView = ({
         )}
 
         {/* ═══ Avatars Tab ═══ */}
+        {tab === 'rules' && (
+          <div className="p-5 sm:p-10 max-w-3xl mx-auto animate-fade-in pb-20">
+            <div className="mb-6">
+              <p className="text-[10px] font-cyber font-black uppercase tracking-[0.24em] text-cyan-300">Fair Play</p>
+              <h1 className="mt-2 font-cyber font-black text-2xl sm:text-3xl text-white">Rules Agreement</h1>
+              <p className="mt-2 text-sm leading-relaxed text-gray-400">
+                Read and sign the rules before playing. Violations can trigger a two-game ban and reduce fair play merit.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-[1fr_220px]">
+              <section className="rounded-2xl border border-white/10 bg-black/40 p-5 sm:p-6">
+                <div className="space-y-3">
+                  {FAIR_PLAY_RULES.map((rule, index) => (
+                    <div key={rule} className="flex gap-3 rounded-xl border border-white/8 bg-white/[0.04] p-3">
+                      <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-500/10 font-cyber text-xs font-black text-cyan-300">
+                        {index + 1}
+                      </span>
+                      <p className="text-sm font-semibold leading-relaxed text-gray-200">{rule}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {!rulesSignedAt ? (
+                  <button
+                    onClick={handleSignRules}
+                    disabled={signingRules}
+                    className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 px-5 py-3 font-cyber text-sm font-black text-white shadow-[0_0_20px_rgba(0,217,255,0.18)] transition-all hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {signingRules ? 'Signing...' : 'I Read And Sign'}
+                  </button>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-green-400/25 bg-green-500/10 px-4 py-3">
+                    <p className="font-cyber text-xs font-black uppercase tracking-[0.18em] text-green-300">Signed</p>
+                    <p className="mt-1 text-sm font-semibold text-green-100">{new Date(rulesSignedAt).toLocaleString()}</p>
+                  </div>
+                )}
+              </section>
+
+              <aside className="rounded-2xl border border-white/10 bg-black/40 p-5">
+                <p className="text-[10px] font-cyber font-black uppercase tracking-[0.18em] text-purple-300">Merit</p>
+                <div className={`mt-4 font-cyber text-5xl font-black ${merit >= 80 ? 'text-green-300' : merit >= 60 ? 'text-yellow-300' : 'text-red-300'}`}>
+                  {merit}
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full ${merit >= 80 ? 'bg-green-400' : merit >= 60 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                    style={{ width: `${Math.min(100, Math.max(0, merit))}%` }}
+                  />
+                </div>
+                {myStats?.isBanned ? (
+                  <div className="mt-5 rounded-xl border border-red-400/25 bg-red-500/10 p-3">
+                    <p className="font-cyber text-xs font-black uppercase tracking-[0.16em] text-red-300">Banned</p>
+                    <p className="mt-1 text-xs font-semibold text-red-100">
+                      {myStats.banGamesRemaining || 0} game(s) remaining.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-cyan-400/15 bg-cyan-500/10 p-3">
+                    <p className="font-cyber text-xs font-black uppercase tracking-[0.16em] text-cyan-300">Clear</p>
+                    <p className="mt-1 text-xs font-semibold text-cyan-100">No active fair play ban.</p>
+                  </div>
+                )}
+              </aside>
+            </div>
+          </div>
+        )}
+
         {tab === 'avatars' && (
           <div className="flex flex-col h-full animate-fade-in">
             <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-xl border-b border-white/5 p-4 sm:px-8">

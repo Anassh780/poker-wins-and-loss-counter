@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   PlayerCard,
   Leaderboard,
@@ -12,6 +12,7 @@ import {
 import { ProfileModal } from './components/ProfileModal';
 import { ProfileView } from './components/ProfileView';
 import { RecoveryPanel } from './components/RecoveryPanel';
+import { AdminSettingsSidebar, type AppNotification, type ArenaSchedule, type ScoringSettings } from './components/AdminSettingsSidebar';
 import {
   downloadImage,
   copyToClipboard,
@@ -21,12 +22,217 @@ import {
 import { logMatchResults, getFilteredLeaderboard, getCutoff, getPreviousPeriodRange, getLeaderboardForPeriod, type TimeRange, type PeriodChampion, type PeriodChampions } from './utils/matchHistory';
 import type { Player } from './types';
 import type { AdminPermissions } from './components/AdminManagement';
-import { auth, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
+import { auth, handleGoogleRedirectResult, loginWithGoogle, logout, configCollection, db } from './lib/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { onSnapshot, doc, setDoc, deleteDoc, collection, query, where, getDocs, addDoc, getDoc } from 'firebase/firestore';
 import './index.css';
 
 type View = 'setup' | 'game' | 'result';
+type DuelProfile = NonNullable<Player['lastDuel']>;
+type DuelPlayer = Pick<Player, 'id' | 'name' | 'avatar'>;
+type DuelHighlight = {
+  id: string;
+  winner: DuelPlayer;
+  opponent: DuelPlayer;
+};
+
+const DEFAULT_MERIT = 100;
+const BAN_GAMES = 2;
+
+const getScoringSettings = (globalConfig: any): ScoringSettings => ({
+  winAction: globalConfig?.scoringSettings?.winAction || 'spreadLosses',
+  lossAction: globalConfig?.scoringSettings?.lossAction || 'spreadWins',
+});
+
+const isPokerArenaAvailable = (schedule?: Partial<ArenaSchedule>) => {
+  if (!schedule?.enabled) return true;
+  if (!schedule.startTime || !schedule.endTime) return true;
+
+  const [startHour, startMinute] = schedule.startTime.split(':').map(Number);
+  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  const start = (startHour || 0) * 60 + (startMinute || 0);
+  const end = (endHour || 0) * 60 + (endMinute || 0);
+
+  if (start <= end) return current >= start && current <= end;
+  return current >= start || current <= end;
+};
+
+const notificationMatchesUser = (notification: AppNotification, user: User | null, player?: Player) => {
+  if (notification.targetType === 'all') return true;
+  if (!notification.targetPlayerId) return false;
+  return notification.targetPlayerId === user?.uid || notification.targetPlayerId === player?.id;
+};
+
+const getPlayerInitial = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
+const getGoogleLoginErrorMessage = (error: unknown) => {
+  const code = (error as { code?: string })?.code;
+
+  if (code === 'auth/popup-closed-by-user') return 'Google sign-in was closed before it finished.';
+  if (code === 'auth/unauthorized-domain') return 'This domain is not authorized in Firebase Authentication.';
+  if (code === 'auth/operation-not-allowed') return 'Google sign-in is not enabled in Firebase Authentication.';
+  if (code === 'auth/configuration-not-found') return 'Firebase Authentication is not configured for this project.';
+  if (code === 'auth/network-request-failed') return 'Network error while connecting to Google sign-in.';
+
+  return 'Google sign-in failed. Please try again.';
+};
+
+const DuelWinPopup = ({ duel }: { duel: DuelHighlight }) => {
+  const renderAvatar = (player: Pick<Player, 'name' | 'avatar'>, className: string) => (
+    <div className={`${className} duel-avatar-ring rounded-full overflow-hidden flex items-center justify-center bg-black/70`}>
+      {player.avatar ? (
+        <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+      ) : (
+        <span className="font-cyber text-2xl font-black text-white">{getPlayerInitial(player.name)}</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[140] flex items-center justify-center px-4">
+      <div className="duel-win-pop relative aspect-square w-[min(86vw,360px)] rounded-full border border-cyan-400/35 bg-black/85 shadow-[0_0_70px_rgba(0,217,255,0.28)] backdrop-blur-xl">
+        <div className="duel-win-ring absolute inset-3 rounded-full border border-purple-400/30" />
+        <div className="duel-win-ring duel-win-ring-delayed absolute inset-9 rounded-full border border-cyan-300/25" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-7 text-center">
+          <p className="mb-4 text-[10px] font-cyber font-black uppercase tracking-[0.24em] text-cyan-300">1 v 1 win</p>
+          <div className="flex w-full items-center justify-center gap-3">
+            {renderAvatar(duel.winner, 'h-24 w-24 border-2 border-green-300 shadow-[0_0_26px_rgba(74,222,128,0.45)]')}
+            <div className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-[11px] font-cyber font-black text-white">VS</div>
+            {renderAvatar(duel.opponent, 'h-16 w-16 border border-red-300/70 shadow-[0_0_20px_rgba(248,113,113,0.3)]')}
+          </div>
+          <h3 className="mt-4 max-w-full truncate text-2xl font-cyber font-black text-white">{duel.winner.name}</h3>
+          <p className="mt-1 max-w-full truncate text-xs font-bold text-gray-300">beat {duel.opponent.name}</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const getDuelOrbitRings = (total: number) => {
+  if (total <= 8) return [{ count: total, radius: 39, size: '23%', min: 94, offset: 0 }];
+  if (total <= 14) {
+    const outer = Math.ceil(total * 0.62);
+    return [
+      { count: outer, radius: 41, size: '18%', min: 76, offset: 0 },
+      { count: total - outer, radius: 28, size: '15%', min: 62, offset: 24 },
+    ];
+  }
+
+  const outer = Math.min(12, Math.ceil(total * 0.44));
+  const middle = Math.min(12, Math.ceil((total - outer) * 0.58));
+  return [
+    { count: outer, radius: 42, size: '14%', min: 52, offset: 0 },
+    { count: middle, radius: 31, size: '12.5%', min: 46, offset: 18 },
+    { count: total - outer - middle, radius: 21, size: '11%', min: 40, offset: 36 },
+  ].filter((ring) => ring.count > 0);
+};
+
+const getDuelOrbitStyle = (index: number, total: number): React.CSSProperties => {
+  const rings = getDuelOrbitRings(total);
+  let cursor = index;
+
+  for (const ring of rings) {
+    if (cursor < ring.count) {
+      const angle = (-90 + ring.offset + (360 / ring.count) * cursor) * (Math.PI / 180);
+      return {
+        left: `${50 + Math.cos(angle) * ring.radius}%`,
+        top: `${50 + Math.sin(angle) * ring.radius}%`,
+        width: ring.size,
+        height: ring.size,
+        minWidth: ring.min,
+        minHeight: ring.min,
+        transform: 'translate(-50%, -50%)',
+      };
+    }
+    cursor -= ring.count;
+  }
+
+  return { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' };
+};
+
+const DuelOpponentSelector = ({
+  winner,
+  candidates,
+  onSelect,
+  onClose,
+}: {
+  winner: DuelPlayer;
+  candidates: DuelPlayer[];
+  onSelect: (opponent: DuelPlayer) => void;
+  onClose: () => void;
+}) => {
+  const crowded = candidates.length > 8;
+  const packed = candidates.length > 14;
+  const centerSizeClass = packed
+    ? 'h-[28%] w-[28%] min-h-[108px] min-w-[108px]'
+    : crowded
+      ? 'h-[31%] w-[31%] min-h-[122px] min-w-[122px]'
+      : 'h-[36%] w-[36%] min-h-[140px] min-w-[140px]';
+  const avatarSizeClass = packed
+    ? 'h-7 w-7 sm:h-9 sm:w-9'
+    : crowded
+      ? 'h-9 w-9 sm:h-11 sm:w-11'
+      : 'h-11 w-11 sm:h-14 sm:w-14';
+  const nameSizeClass = packed
+    ? 'mt-1 max-w-[62px] text-[8px] sm:max-w-[74px] sm:text-[9px]'
+    : crowded
+      ? 'mt-1.5 max-w-[72px] text-[9px] sm:max-w-[84px] sm:text-[10px]'
+      : 'mt-2 max-w-[76px] text-[10px] sm:max-w-[92px] sm:text-xs';
+
+  return (
+  <div className="fixed inset-0 z-[145] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
+    <div className="duel-selector-pop relative aspect-square w-[min(94vw,520px)] overflow-hidden rounded-full border border-cyan-300/30 bg-[radial-gradient(circle_at_50%_50%,rgba(168,85,247,0.24),rgba(6,10,30,0.97)_46%,rgba(3,6,18,0.98)_100%)] text-center shadow-[0_0_100px_rgba(168,85,247,0.28)]">
+      <button
+        onClick={onClose}
+        className="absolute right-[14%] top-[12%] z-30 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/10 text-sm font-black text-gray-300 shadow-lg backdrop-blur hover:bg-red-500/20 hover:text-white"
+        aria-label="Close opponent selector"
+      >
+        x
+      </button>
+
+      <div className="duel-win-ring pointer-events-none absolute inset-4 rounded-full border border-purple-300/25" />
+      <div className="duel-win-ring duel-win-ring-delayed pointer-events-none absolute inset-14 rounded-full border border-cyan-300/18" />
+      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[38%] w-[38%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10 bg-white/[0.03] shadow-[inset_0_0_30px_rgba(255,255,255,0.05)]" />
+
+      <div className={`duel-orbit-core absolute left-1/2 top-1/2 z-20 flex ${centerSizeClass} -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border border-cyan-300/35 bg-[radial-gradient(circle_at_35%_24%,rgba(255,255,255,0.9),rgba(59,130,246,0.64)_18%,rgba(168,85,247,0.62)_48%,rgba(9,13,36,0.95)_100%)] p-4 shadow-[0_0_36px_rgba(0,217,255,0.34)]`}>
+        <p className="mb-2 text-[9px] font-cyber font-black uppercase tracking-[0.2em] text-cyan-100">Winner</p>
+        <div className="h-16 w-16 overflow-hidden rounded-full border-2 border-green-300 bg-black/60 shadow-[0_0_24px_rgba(74,222,128,0.42)] sm:h-20 sm:w-20">
+          {winner.avatar ? (
+            <img src={winner.avatar} alt={winner.name} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-3xl font-cyber font-black text-white">
+              {getPlayerInitial(winner.name)}
+            </div>
+          )}
+        </div>
+        <p className="mt-2 max-w-[120px] truncate text-sm font-cyber font-black text-white sm:text-base">{winner.name}</p>
+        <p className="text-[8px] font-bold uppercase tracking-[0.18em] text-green-200">choose 1v1</p>
+      </div>
+
+      {candidates.map((player, index) => (
+        <button
+          key={player.id}
+          onClick={() => onSelect(player)}
+          className="duel-orbit-button absolute z-20 flex flex-col items-center justify-center rounded-full border border-white/18 bg-[radial-gradient(circle_at_35%_25%,rgba(255,255,255,0.28),rgba(25,31,74,0.92)_45%,rgba(7,10,29,0.96)_100%)] p-1.5 text-center shadow-[0_0_26px_rgba(129,140,248,0.22),inset_0_1px_0_rgba(255,255,255,0.15)] transition-all hover:border-cyan-300/70 hover:shadow-[0_0_36px_rgba(0,217,255,0.34)]"
+          style={getDuelOrbitStyle(index, candidates.length)}
+        >
+          <span className={`${avatarSizeClass} overflow-hidden rounded-full border border-cyan-200/45 bg-black/60 shadow-[0_0_18px_rgba(0,217,255,0.22)]`}>
+            {player.avatar ? (
+              <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-base font-cyber font-black text-white sm:text-lg">
+                {getPlayerInitial(player.name)}
+              </span>
+            )}
+          </span>
+          <span className={`${nameSizeClass} truncate font-cyber font-black text-white`}>{player.name}</span>
+        </button>
+      ))}
+    </div>
+  </div>
+  );
+};
 
 export default function App() {
   const [view, setView] = useState<View>('setup');
@@ -51,11 +257,22 @@ export default function App() {
   const [fontColor, setFontColor] = useState<'cyan' | 'red' | 'green' | 'blue' | 'yellow' | 'pink'>(() => (localStorage.getItem('ct-fcolor') as any) || 'cyan');
   const [uiStyle, setUiStyle] = useState<'cyberpunk' | 'sharp' | 'corporate' | 'arcade' | 'frost' | 'steel' | 'royal'>(() => (localStorage.getItem('ct-uistyle') as any) || 'cyberpunk');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mobileTab, setMobileTab] = useState<'controls' | 'leaderboard'>('leaderboard');
   const [dbError, setDbError] = useState<string | null>(null);
   const [showResultBackup, setShowResultBackup] = useState(false);
   const [periodChampions, setPeriodChampions] = useState<PeriodChampions>({ daily: null, weekly: null, monthly: null });
+  const [sessionDuelProfiles, setSessionDuelProfiles] = useState<Record<string, DuelProfile>>({});
+  const [duelHighlight, setDuelHighlight] = useState<DuelHighlight | null>(null);
+  const [duelSelector, setDuelSelector] = useState<{ winner: DuelPlayer; candidates: DuelPlayer[] } | null>(null);
+  const [showAdminSettings, setShowAdminSettings] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('ct-notifications') === 'true');
+  const [appNotice, setAppNotice] = useState<{ title: string; message: string; tone?: 'info' | 'warning' | 'danger' } | null>(null);
+  const duelPopupTimerRef = useRef<number | null>(null);
+  const lastActiveGameSessionRef = useRef<string>('');
+  const lastNotificationIdRef = useRef<string>(localStorage.getItem('ct-last-notification-id') || '');
   
   // Admin logic
   const [adminEditingPlayer, setAdminEditingPlayer] = useState<Player | null>(null);
@@ -237,6 +454,106 @@ export default function App() {
 
   // Database Selectors based on Testing Mode
   const activeUsersColl = collection(db, isTestingMode ? 'users_beta' : 'users');
+  const currentProfile = currentUser
+    ? globalPlayers.find((player) => player.id === currentUser.uid || player.name.toLowerCase() === (currentUser.displayName || '').toLowerCase())
+    : undefined;
+  const scoringSettings = getScoringSettings(globalConfig);
+  const arenaSchedule = globalConfig?.arenaSchedule as ArenaSchedule | undefined;
+  const isArenaAvailable = isPokerArenaAvailable(arenaSchedule);
+
+  const showAppNotification = (title: string, message: string, tone: 'info' | 'warning' | 'danger' = 'info') => {
+    setAppNotice({ title, message, tone });
+
+    if (
+      notificationsEnabled &&
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted'
+    ) {
+      new Notification(title, { body: message });
+    }
+  };
+
+  const toggleGameNotifications = async () => {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      localStorage.setItem('ct-notifications', 'false');
+      setAppNotice({ title: 'Notifications off', message: 'Game-start notifications are paused.', tone: 'warning' });
+      return;
+    }
+
+    if (typeof Notification !== 'undefined') {
+      if (Notification.permission === 'default') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          setNotificationsEnabled(false);
+          localStorage.setItem('ct-notifications', 'false');
+          setAppNotice({ title: 'Notifications blocked', message: 'Allow browser notifications to receive poker game alerts.', tone: 'warning' });
+          return;
+        }
+      }
+
+      if (Notification.permission === 'denied') {
+        setNotificationsEnabled(false);
+        localStorage.setItem('ct-notifications', 'false');
+        setAppNotice({ title: 'Notifications blocked', message: 'Browser notifications are blocked for this site.', tone: 'warning' });
+        return;
+      }
+    }
+
+    setNotificationsEnabled(true);
+    localStorage.setItem('ct-notifications', 'true');
+    setAppNotice({ title: 'Notifications on', message: 'You will be notified when players are playing poker.', tone: 'info' });
+  };
+
+  useEffect(() => {
+    const hasActiveGame = !!activeGameSessionId && activeGamePlayers.length > 0;
+
+    if (hasActiveGame && lastActiveGameSessionRef.current !== activeGameSessionId) {
+      lastActiveGameSessionRef.current = activeGameSessionId;
+      const names = activeGamePlayers.map((player) => player.name).join(', ');
+      if (notificationsEnabled) {
+        showAppNotification('Poker game active', names ? `${names} are playing poker now.` : 'Players are playing poker now.');
+      }
+      return;
+    }
+
+    if (!hasActiveGame && lastActiveGameSessionRef.current) {
+      lastActiveGameSessionRef.current = '';
+    }
+  }, [activeGameSessionId, activeGamePlayers, notificationsEnabled]);
+
+  useEffect(() => {
+    const notifications = Array.isArray(globalConfig?.notifications)
+      ? (globalConfig.notifications as AppNotification[])
+      : [];
+    const latest = notifications
+      .filter((notification) => notificationMatchesUser(notification, currentUser, currentProfile))
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+
+    if (!latest) return;
+
+    if (!lastNotificationIdRef.current) {
+      lastNotificationIdRef.current = latest.id;
+      localStorage.setItem('ct-last-notification-id', latest.id);
+      return;
+    }
+
+    if (latest.id !== lastNotificationIdRef.current) {
+      lastNotificationIdRef.current = latest.id;
+      localStorage.setItem('ct-last-notification-id', latest.id);
+      showAppNotification('Admin notification', latest.message);
+    }
+  }, [globalConfig?.notifications, currentUser?.uid, currentProfile?.id]);
+
+  useEffect(() => {
+    if (!showArena || isArenaAvailable) return;
+    setShowArena(false);
+    showAppNotification(
+      'Poker Arena closed',
+      arenaSchedule?.message || 'Poker Arena is outside the scheduled play window.',
+      'warning'
+    );
+  }, [showArena, isArenaAvailable, arenaSchedule?.message]);
 
   // Listen to remote beta testers dynamically
   useEffect(() => {
@@ -284,8 +601,26 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setCurrentUser(u));
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setCurrentUser(u);
+      if (u) {
+        setAuthError(null);
+        setAuthLoading(false);
+      }
+    });
     return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    handleGoogleRedirectResult().catch((error) => {
+      setAuthError(getGoogleLoginErrorMessage(error));
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (duelPopupTimerRef.current) window.clearTimeout(duelPopupTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -425,7 +760,11 @@ export default function App() {
       name: regFirstName.trim(),
       avatar: profileAvatar || currentUser.photoURL || '',
       wins: finalWins,
-      losses: finalLosses
+      losses: finalLosses,
+      merit: oldMatch?.merit ?? DEFAULT_MERIT,
+      rulesSignedAt: oldMatch?.rulesSignedAt || 0,
+      isBanned: oldMatch?.isBanned || false,
+      banGamesRemaining: oldMatch?.banGamesRemaining || 0
     }, { merge: true });
     
     // Cleanup old orphaned static record if we merged
@@ -461,6 +800,9 @@ export default function App() {
     setShowPlayerSetup(true);
     setSessionStartTime(Date.now());
     setWinner(null);
+    setSessionDuelProfiles({});
+    setDuelHighlight(null);
+    setDuelSelector(null);
     setMobileTab('leaderboard');
     setView('game');
   };
@@ -474,6 +816,15 @@ export default function App() {
     // Reuse their existing global ID if found, otherwise use provided or generate new
     const id = playerData.id || existingNameMatch?.id || Date.now().toString();
 
+    if (existingNameMatch?.isBanned) {
+      showAppNotification(
+        'Player banned',
+        `${existingNameMatch.name} is banned for ${existingNameMatch.banGamesRemaining || BAN_GAMES} more game(s).`,
+        'danger'
+      );
+      return;
+    }
+
     // Check if they are already in the *current* game
     const existingInGame = gamePlayers.find((p) => p.id === id);
 
@@ -483,6 +834,10 @@ export default function App() {
       avatar: playerData.avatar || existingNameMatch?.avatar || '',
       wins:   existingInGame?.wins    ?? 0,
       losses: existingInGame?.losses  ?? 0,
+      merit: existingNameMatch?.merit ?? DEFAULT_MERIT,
+      rulesSignedAt: existingNameMatch?.rulesSignedAt || 0,
+      isBanned: existingNameMatch?.isBanned || false,
+      banGamesRemaining: existingNameMatch?.banGamesRemaining || 0,
     };
 
     setGamePlayers((prev) => {
@@ -503,6 +858,8 @@ export default function App() {
         avatar: player.avatar || '',
         wins: existingNameMatch?.wins ?? 0,
         losses: existingNameMatch?.losses ?? 0,
+        merit: existingNameMatch?.merit ?? DEFAULT_MERIT,
+        rulesSignedAt: existingNameMatch?.rulesSignedAt || 0,
       }, { merge: true }).catch((err) => console.error("Firebase save failed:", err));
     }
 
@@ -543,16 +900,99 @@ export default function App() {
     setRedoStack((curr) => curr.slice(0, -1));
   };
 
+  const toDuelPlayer = (player: DuelPlayer): DuelPlayer => ({
+    id: player.id,
+    name: player.name,
+    avatar: player.avatar || '',
+  });
+
+  const getDuelOpponentCandidates = (winnerId: string): DuelPlayer[] => {
+    const candidates = new Map<string, DuelPlayer>();
+    [...gamePlayers, ...globalPlayers].forEach((player) => {
+      if (player.id === winnerId || !player.name.trim()) return;
+      if (!candidates.has(player.id)) candidates.set(player.id, toDuelPlayer(player));
+    });
+    return Array.from(candidates.values());
+  };
+
+  const createOneOnOneDuel = (winnerPlayer: DuelPlayer, opponentPlayer: DuelPlayer): { records: Record<string, DuelProfile>; highlight: DuelHighlight } => {
+    const winner = toDuelPlayer(winnerPlayer);
+    const opponent = toDuelPlayer(opponentPlayer);
+
+    const timestamp = Date.now();
+    const sessionId = sessionStartTime ? String(sessionStartTime) : String(timestamp);
+    const winnerRecord: DuelProfile = {
+      opponentId: opponent.id,
+      opponentName: opponent.name,
+      opponentAvatar: opponent.avatar || '',
+      result: 'win',
+      timestamp,
+      sessionId,
+    };
+    const opponentRecord: DuelProfile = {
+      opponentId: winner.id,
+      opponentName: winner.name,
+      opponentAvatar: winner.avatar || '',
+      result: 'loss',
+      timestamp,
+      sessionId,
+    };
+
+    return {
+      records: {
+        [winner.id]: winnerRecord,
+        [opponent.id]: opponentRecord,
+      },
+      highlight: {
+        id: `${sessionId}-${timestamp}-${winner.id}`,
+        winner,
+        opponent,
+      },
+    };
+  };
+
+  const recordDuelSelection = (winnerPlayer: DuelPlayer, opponentPlayer: DuelPlayer) => {
+    const duel = createOneOnOneDuel(winnerPlayer, opponentPlayer);
+    setSessionDuelProfiles((prev) => ({ ...prev, ...duel.records }));
+    setGamePlayers((prev) => prev.map((player) => (
+      duel.records[player.id] ? { ...player, lastDuel: duel.records[player.id] } : player
+    )));
+    showDuelHighlight(duel.highlight);
+  };
+
+  const openDuelSelector = (winnerId: string) => {
+    const winnerPlayer = gamePlayers.find((player) => player.id === winnerId) || globalPlayers.find((player) => player.id === winnerId);
+    if (!winnerPlayer) return;
+    const candidates = getDuelOpponentCandidates(winnerId);
+    if (candidates.length === 0) return;
+    setDuelSelector({ winner: toDuelPlayer(winnerPlayer), candidates });
+  };
+
+  const showDuelHighlight = (highlight: DuelHighlight) => {
+    setDuelHighlight(highlight);
+    if (duelPopupTimerRef.current) window.clearTimeout(duelPopupTimerRef.current);
+    duelPopupTimerRef.current = window.setTimeout(() => setDuelHighlight(null), 3600);
+  };
+
   const handleAddWin = (id: string) => {
     pushHistory([...gamePlayers]);
-    setGamePlayers((prev) => prev.map((p) => p.id === id ? { ...p, wins: p.wins + 1 } : { ...p, losses: p.losses + 1 }));
+    setGamePlayers((prev) => prev.map((p) => {
+      if (p.id === id) return { ...p, wins: p.wins + 1 };
+      return scoringSettings.winAction === 'spreadLosses' ? { ...p, losses: p.losses + 1 } : p;
+    }));
+    openDuelSelector(id);
   };
 
   const handleAddLoss = (id: string) => {
     pushHistory([...gamePlayers]);
+    const winnerId = gamePlayers.length === 2 ? gamePlayers.find((p) => p.id !== id)?.id : undefined;
     setGamePlayers((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, losses: p.losses + 1 } : { ...p, wins: p.wins + 1 }))
+      prev.map((p) => {
+        if (p.id === id) return { ...p, losses: p.losses + 1 };
+        return scoringSettings.lossAction === 'spreadWins' ? { ...p, wins: p.wins + 1 } : p;
+      })
     );
+    if (winnerId) openDuelSelector(winnerId);
   };
 
   const handleResetStats = (id?: string) => {
@@ -633,27 +1073,57 @@ export default function App() {
     setShowResultBackup(true);
     if (currentUser) {
       setSaving(true);
+      const gamePlayerIds = new Set(gamePlayers.map((player) => player.id));
       Promise.all(
-        gamePlayers.map((p) => {
+        [
+        ...gamePlayers.map((p) => {
           const global = globalPlayers.find((g) => g.id === p.id);
           const finalWins = (global?.wins || 0) + p.wins;
           const finalLosses = (global?.losses || 0) + p.losses;
           const likes = global?.likes || 0;
           const dislikes = global?.dislikes || 0;
           const isCertified = checkPlayerCertification(finalWins, finalLosses, likes, dislikes);
-
-          return setDoc(doc(activeUsersColl, p.id), {
-            id: p.id, 
-            name: p.name, 
+          const lastDuel = sessionDuelProfiles[p.id] || p.lastDuel;
+          const playerUpdate: Partial<Player> & Pick<Player, 'id' | 'name' | 'avatar' | 'wins' | 'losses'> = {
+            id: p.id,
+            name: p.name,
             avatar: p.avatar || '',
-            wins:   finalWins,
+            wins: finalWins,
             losses: finalLosses,
-            isCertified
-          }, { merge: true }).catch((err) => {
+            isCertified,
+          };
+          if (lastDuel) playerUpdate.lastDuel = lastDuel;
+
+          return setDoc(doc(activeUsersColl, p.id), playerUpdate, { merge: true }).catch((err) => {
             console.error("Firebase save failed for", p.name, err);
             alert(`Failed to save ${p.name}. Make sure Firestore rules are set to test mode.`);
           });
-        })
+        }),
+        ...Object.entries(sessionDuelProfiles)
+          .filter(([playerId]) => !gamePlayerIds.has(playerId))
+          .map(([playerId, lastDuel]) =>
+            setDoc(doc(activeUsersColl, playerId), { lastDuel }, { merge: true }).catch((err) => {
+              console.error("Firebase duel record save failed for", playerId, err);
+            })
+          ),
+        ...globalPlayers
+          .filter((player) => player.isBanned)
+          .map((player) => {
+            const remaining = Math.max(0, (player.banGamesRemaining ?? BAN_GAMES) - 1);
+            const banUpdate: Partial<Player> = remaining <= 0
+              ? {
+                  isBanned: false,
+                  banGamesRemaining: 0,
+                  banReason: '',
+                  bannedAt: 0,
+                }
+              : { banGamesRemaining: remaining };
+
+            return setDoc(doc(activeUsersColl, player.id), banUpdate, { merge: true }).catch((err) => {
+              console.error("Firebase ban countdown failed for", player.name, err);
+            });
+          })
+        ]
       ).then(() => {
         // Log match history with timestamps for time-filtered leaderboard
         logMatchResults(gamePlayers, isTestingMode).catch((err) =>
@@ -670,6 +1140,9 @@ export default function App() {
     setSessionStartTime(0);
     setGamePlayers([]);
     setWinner(null);
+    setSessionDuelProfiles({});
+    setDuelHighlight(null);
+    setDuelSelector(null);
     setSelectedPlayers([]);
   };
 
@@ -679,7 +1152,21 @@ export default function App() {
 
   const handleStartGameWithSelected = () => {
     if (selectedPlayers.length < 2) return;
-    const playersToStart = globalPlayers.filter(p => selectedPlayers.includes(p.id)).map(p => ({
+    const selectedGlobalPlayers = globalPlayers.filter(p => selectedPlayers.includes(p.id));
+    const bannedSelected = selectedGlobalPlayers.filter((player) => player.isBanned);
+    const playablePlayers = selectedGlobalPlayers.filter((player) => !player.isBanned);
+
+    if (bannedSelected.length > 0) {
+      showAppNotification(
+        'Banned player blocked',
+        `${bannedSelected.map((player) => player.name).join(', ')} cannot play until the ban is removed.`,
+        'danger'
+      );
+    }
+
+    if (playablePlayers.length < 2) return;
+
+    const playersToStart = playablePlayers.map(p => ({
       ...p,
       wins: 0,
       losses: 0
@@ -690,11 +1177,16 @@ export default function App() {
     setShowPlayerSetup(false);
     setSessionStartTime(Date.now());
     setWinner(null);
+    setSessionDuelProfiles({});
+    setDuelHighlight(null);
+    setDuelSelector(null);
     setMobileTab('leaderboard');
     setView('game');
   };
 
   const handleAdminSave = async (updatedPlayer: Player) => {
+    if (!isAdmin || !hasPermission('edit_players')) return;
+
     if (adminEditTimeRange !== 'all') {
       const orig = adminEditOriginalPlayer;
       if (!orig) return;
@@ -756,6 +1248,8 @@ export default function App() {
   };
 
   const handleOpenAdminEdit = (player: Player, range: TimeRange = 'all') => {
+    if (!isAdmin || !hasPermission('edit_players')) return;
+
     setAdminEditTimeRange(range);
     if (range === 'all') {
       const globalPlayer = globalPlayers.find(p => p.id === player.id);
@@ -767,7 +1261,57 @@ export default function App() {
     }
   };
 
+  const handlePlayerQuickAction = async (player: Player, action: 'ban' | 'unban' | 'merit') => {
+    if (!isAdmin || !hasPermission('edit_players')) return;
+
+    const globalPlayer = globalPlayers.find((p) => p.id === player.id) || player;
+    const currentMerit = globalPlayer.merit ?? DEFAULT_MERIT;
+    let update: Partial<Player> = {};
+    let title = '';
+    let message = '';
+
+    if (action === 'ban') {
+      update = {
+        isBanned: true,
+        banGamesRemaining: BAN_GAMES,
+        banReason: 'Fair play violation',
+        bannedAt: Date.now(),
+        merit: Math.max(0, currentMerit - 10),
+      };
+      title = 'Player banned';
+      message = `${globalPlayer.name} is banned for ${BAN_GAMES} games and lost 10 merit.`;
+    }
+
+    if (action === 'unban') {
+      update = {
+        isBanned: false,
+        banGamesRemaining: 0,
+        banReason: '',
+        bannedAt: 0,
+      };
+      title = 'Player unbanned';
+      message = `${globalPlayer.name} can play again.`;
+    }
+
+    if (action === 'merit') {
+      update = {
+        merit: Math.min(100, currentMerit + 5),
+      };
+      title = 'Merit restored';
+      message = `${globalPlayer.name} received +5 fair play merit.`;
+    }
+
+    if (!Object.keys(update).length) return;
+
+    await setDoc(doc(activeUsersColl, player.id), update, { merge: true });
+    setGamePlayers((prev) => prev.map((p) => p.id === player.id ? { ...p, ...update } : p));
+    setLeaderboardRefreshTrigger((prev) => prev + 1);
+    showAppNotification(title, message, action === 'ban' ? 'danger' : 'info');
+  };
+
   const handleAdminDelete = async (playerId: string) => {
+    if (!isAdmin || !hasPermission('delete_players')) return;
+
     try {
       // 1. Delete from the main users collection
       await deleteDoc(doc(activeUsersColl, playerId));
@@ -799,7 +1343,32 @@ export default function App() {
   // Check if features are universally unlocked
   const isFeaturesUnlocked = isTestingMode || globalConfig?.isPublicRelease;
 
+  const handleLoginWithGoogle = async () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await loginWithGoogle();
+    } catch (error) {
+      setAuthError(getGoogleLoginErrorMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   // ── Auth Header & Config Bar ──
+  const handleOpenArena = () => {
+    if (!isArenaAvailable) {
+      showAppNotification(
+        'Poker Arena closed',
+        arenaSchedule?.message || 'Poker Arena is outside the scheduled play window.',
+        'warning'
+      );
+      return;
+    }
+
+    setShowArena(true);
+  };
+
   const renderAuthHeader = (showBack: boolean = false) => (
     <div className="sticky top-0 z-50 flex flex-col w-full shadow-lg">
       {/* Top Bar: Navigation & Auth */}
@@ -883,6 +1452,27 @@ export default function App() {
                 </button>
               )}
 
+              <button
+                onClick={toggleGameNotifications}
+                className={`px-2 sm:px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase transition-smooth flex-shrink-0 ${
+                  notificationsEnabled
+                    ? 'bg-green-500/15 text-green-300 border-green-400/40 shadow-[0_0_10px_rgba(34,197,94,0.18)]'
+                    : 'bg-black/40 text-gray-400 border-white/10 hover:border-cyan-400/40 hover:text-cyan-300'
+                }`}
+              >
+                <span className="hidden sm:inline">{notificationsEnabled ? 'Notify On' : 'Notify Off'}</span>
+                <span className="sm:hidden">{notificationsEnabled ? 'On' : 'Off'}</span>
+              </button>
+
+              {isAdmin && (
+                <button
+                  onClick={() => setShowAdminSettings(true)}
+                  className="px-2 sm:px-3 py-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 text-[10px] font-bold uppercase text-cyan-300 transition-smooth hover:border-cyan-300 hover:bg-cyan-500/20 flex-shrink-0"
+                >
+                  Settings
+                </button>
+              )}
+
               {/* Profile/Features Button (non-beta users who have features unlocked) */}
               {isFeaturesUnlocked && !isBetaTester && (
                 <button onClick={() => setShowProfile(true)}
@@ -904,19 +1494,31 @@ export default function App() {
             </div>
             </>
           ) : (
-            <button onClick={loginWithGoogle}
-              className="btn-shimmer flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full px-3 py-1.5 transition-smooth cursor-pointer">
+            <button onClick={handleLoginWithGoogle} disabled={authLoading}
+              className="btn-shimmer flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full px-3 py-1.5 transition-smooth cursor-pointer disabled:opacity-60 disabled:cursor-wait">
               <svg className="w-3 h-3 text-white flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                 <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                 <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
               </svg>
-              <span className="text-[11px] sm:text-xs font-cyber font-bold text-white whitespace-nowrap">Sign in</span>
+              <span className="text-[11px] sm:text-xs font-cyber font-bold text-white whitespace-nowrap">{authLoading ? 'Signing in...' : 'Sign in'}</span>
             </button>
           )}
         </div>
       </div>
+
+      {authError && (
+        <div className="flex items-center justify-center gap-3 border-b border-red-500/25 bg-red-500/10 px-3 py-2 text-center text-[11px] font-bold text-red-200">
+          <span>{authError}</span>
+          <button
+            onClick={() => setAuthError(null)}
+            className="rounded-full border border-red-300/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-red-100 hover:bg-red-500/20"
+          >
+            Close
+          </button>
+        </div>
+      )}
 
       {/* Settings Bar: Dropdowns that never glitch and wrap perfectly on mobile */}
       <div className="flex items-center justify-center flex-wrap gap-2 sm:gap-4 px-3 sm:px-5 py-2 bg-black/60 border-b border-white/5 backdrop-blur-md">
@@ -965,7 +1567,7 @@ export default function App() {
       </div>
 
       {/* Global Modals Mounted Here so they show up over any View */}
-      {adminEditingPlayer && (
+      {isAdmin && adminEditingPlayer && (
         <AdminEditModal
           player={adminEditingPlayer}
           onSave={handleAdminSave}
@@ -995,6 +1597,54 @@ export default function App() {
 
       {/* Global Error Diagnostics */}
       <ErrorSidebar isAdmin={isAdmin} />
+
+      {isAdmin && (
+        <AdminSettingsSidebar
+          open={showAdminSettings}
+          onClose={() => setShowAdminSettings(false)}
+          globalConfig={globalConfig}
+          globalPlayers={globalPlayers}
+          onSetGlobalConfig={async (updates) => {
+            await setDoc(doc(configCollection, 'master_settings'), updates, { merge: true });
+          }}
+          currentAdminName={currentUser?.displayName || userEmail || 'Admin'}
+        />
+      )}
+
+      {appNotice && (
+        <div className="fixed right-4 top-24 z-[170] w-[min(92vw,360px)] rounded-2xl border border-white/12 bg-[#080d24]/95 p-4 shadow-[0_20px_55px_rgba(0,0,0,0.45)] backdrop-blur-xl animate-slide-up">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className={`font-cyber text-sm font-black uppercase tracking-[0.14em] ${
+                appNotice.tone === 'danger' ? 'text-red-300' : appNotice.tone === 'warning' ? 'text-amber-300' : 'text-cyan-300'
+              }`}>
+                {appNotice.title}
+              </p>
+              <p className="mt-1 text-xs font-semibold leading-relaxed text-gray-200">{appNotice.message}</p>
+            </div>
+            <button
+              onClick={() => setAppNotice(null)}
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs font-black text-gray-300 hover:bg-white/10 hover:text-white"
+              aria-label="Close notification"
+            >
+              x
+            </button>
+          </div>
+        </div>
+      )}
+
+      {duelHighlight && <DuelWinPopup duel={duelHighlight} />}
+      {duelSelector && (
+        <DuelOpponentSelector
+          winner={duelSelector.winner}
+          candidates={duelSelector.candidates}
+          onSelect={(opponent) => {
+            recordDuelSelection(duelSelector.winner, opponent);
+            setDuelSelector(null);
+          }}
+          onClose={() => setDuelSelector(null)}
+        />
+      )}
 
       {/* Poker Arena Overlay — global, shows over any view */}
       {showArena && (
@@ -1121,19 +1771,32 @@ export default function App() {
 
             {/* Poker Arena Entry Button */}
             <button
-              onClick={() => setShowArena(true)}
+              onClick={handleOpenArena}
               className="w-full py-3 rounded-2xl font-black text-base tracking-widest transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95"
               style={{
-                background: 'linear-gradient(135deg, #1a0533 0%, #2d0a5e 50%, #1a0533 100%)',
-                border: '1.5px solid rgba(168,85,247,0.5)',
-                boxShadow: '0 0 24px rgba(168,85,247,0.2), inset 0 1px 0 rgba(255,255,255,0.05)',
-                color: '#e879f9',
+                background: isArenaAvailable
+                  ? 'linear-gradient(135deg, #1a0533 0%, #2d0a5e 50%, #1a0533 100%)'
+                  : 'linear-gradient(135deg, rgba(39,20,26,0.95), rgba(73,28,36,0.95))',
+                border: isArenaAvailable ? '1.5px solid rgba(168,85,247,0.5)' : '1.5px solid rgba(248,113,113,0.35)',
+                boxShadow: isArenaAvailable
+                  ? '0 0 24px rgba(168,85,247,0.2), inset 0 1px 0 rgba(255,255,255,0.05)'
+                  : '0 0 18px rgba(248,113,113,0.12), inset 0 1px 0 rgba(255,255,255,0.04)',
+                color: isArenaAvailable ? '#e879f9' : '#fca5a5',
               }}
             >
               <span style={{ fontSize: '1.4rem' }}>🃏</span>
-              <span>POKER ARENA</span>
-              <span className="text-xs font-normal opacity-60 ml-1">Deal Cards Online</span>
+              <span>{isArenaAvailable ? 'POKER ARENA' : 'ARENA CLOSED'}</span>
+              <span className="text-xs font-normal opacity-60 ml-1">{isArenaAvailable ? 'Deal Cards Online' : 'Scheduled Offline'}</span>
             </button>
+            {arenaSchedule?.enabled && (
+              <div className={`mt-2 rounded-xl border px-3 py-2 text-center text-[10px] font-cyber font-bold uppercase tracking-wider ${
+                isArenaAvailable
+                  ? 'border-green-400/25 bg-green-500/10 text-green-300'
+                  : 'border-red-400/25 bg-red-500/10 text-red-300'
+              }`}>
+                {isArenaAvailable ? 'Arena online' : 'Arena offline'} {arenaSchedule.startTime} - {arenaSchedule.endTime}
+              </div>
+            )}
           </div>
 
           {/* Database Error Banner */}
@@ -1220,8 +1883,9 @@ export default function App() {
                       players={globalPlayers}
                       globalPlayers={globalPlayers}
                       isAdmin={isAdmin}
-                      canEditPlayers={hasPermission('edit_players')}
-                      onAdminEdit={handleOpenAdminEdit}
+                      canEditPlayers={isAdmin && hasPermission('edit_players')}
+                      onAdminEdit={isAdmin && hasPermission('edit_players') ? handleOpenAdminEdit : undefined}
+                      onPlayerQuickAction={isAdmin && hasPermission('edit_players') ? handlePlayerQuickAction : undefined}
                       showTimeFilter={true}
                       isTestingMode={isTestingMode}
                       isGameActive={isGameRunning}
@@ -1298,7 +1962,7 @@ export default function App() {
         </div>
 
         {/* Global Admin Modal */}
-        {adminEditingPlayer && (
+        {isAdmin && adminEditingPlayer && (
           <AdminEditModal
             player={adminEditingPlayer}
             onSave={handleAdminSave}
@@ -1336,7 +2000,7 @@ export default function App() {
           </div>
 
           {/* Mobile tab switcher */}
-          {isGameReady && (
+          {isGameReady && isAdmin && (
             <div className="lg:hidden flex rounded-xl overflow-hidden mb-4 border border-white/10">
               {(['controls', 'leaderboard'] as const).map((t) => (
                 <button key={t} onClick={() => setMobileTab(t)}
@@ -1419,13 +2083,14 @@ export default function App() {
             )}
 
             {/* RIGHT — Leaderboard */}
-            <div className={`lg:col-span-2 mt-4 lg:mt-0 overflow-hidden ${isGameReady && mobileTab !== 'leaderboard' ? 'hidden lg:block' : 'block'}`}>
+            <div className={`lg:col-span-2 mt-4 lg:mt-0 overflow-hidden ${isGameReady && isAdmin && mobileTab !== 'leaderboard' ? 'hidden lg:block' : 'block'}`}>
               <Leaderboard
                 players={sortedGamePlayers}
                 globalPlayers={globalPlayers}
                 isAdmin={isAdmin}
-                canEditPlayers={hasPermission('edit_players')}
-                onAdminEdit={handleOpenAdminEdit}
+                canEditPlayers={isAdmin && hasPermission('edit_players')}
+                onAdminEdit={isAdmin && hasPermission('edit_players') ? handleOpenAdminEdit : undefined}
+                onPlayerQuickAction={isAdmin && hasPermission('edit_players') ? handlePlayerQuickAction : undefined}
                 isGameActive={activeGamePlayers.length > 0}
                 activeGamePlayerIds={activeGamePlayers.map((p) => p.id)}
                 activeGamePlayerNames={activeGamePlayers.map((p) => p.name.toLowerCase().trim())}
@@ -1453,7 +2118,7 @@ export default function App() {
         </div>
 
         {/* Global Admin Modal */}
-        {adminEditingPlayer && (
+        {isAdmin && adminEditingPlayer && (
           <AdminEditModal
             player={adminEditingPlayer}
             timeRange={adminEditTimeRange}
@@ -1540,7 +2205,7 @@ export default function App() {
         </div>
 
         {/* Global Admin Modal Rendered on Top */}
-        {adminEditingPlayer && (
+        {isAdmin && adminEditingPlayer && (
           <AdminEditModal
             player={adminEditingPlayer}
             timeRange={adminEditTimeRange}
