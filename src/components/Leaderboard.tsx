@@ -4,14 +4,16 @@ import { db } from '../lib/firebase';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials, copyDOMElementToClipboard } from '../utils/imageExport';
 import { getFilteredLeaderboard, getNextResetInfo, type TimeRange, type AggregatedPlayer } from '../utils/matchHistory';
+import { StreakBadge } from './StreakBadge';
 
 const WEEKLY_PODIUM_MIN_GAMES = 80;
 type PlayerQuickAction = 'ban' | 'unban' | 'merit';
+type LeaderboardSort = 'wins' | 'winRate' | 'streak' | 'matches';
 
 interface LeaderboardProps {
   players: Player[];
   globalPlayers?: Player[];
-  sortBy?: 'wins' | 'winRate' | 'matches';
+  sortBy?: LeaderboardSort;
   isAdmin?: boolean;
   canEditPlayers?: boolean;
   onAdminEdit?: (player: Player, timeRange: TimeRange) => void;
@@ -159,7 +161,7 @@ export const Leaderboard = ({
   refreshTrigger,
   activeGameSessionId,
 }: LeaderboardProps) => {
-  const [sortMethod, setSortMethod] = useState<'wins' | 'winRate' | 'matches'>(sortBy);
+  const [sortMethod, setSortMethod] = useState<LeaderboardSort>(sortBy);
   const [timeRange, setTimeRange] = useState<TimeRange>(showTimeFilter ? '24h' : 'all');
   const [filteredPlayers, setFilteredPlayers] = useState<AggregatedPlayer[] | null>(null);
   const [loadingFilter, setLoadingFilter] = useState(false);
@@ -348,15 +350,27 @@ export const Leaderboard = ({
 
   // Use filtered data or original players
   const activePlayers: Player[] = filteredPlayers
-    ? filteredPlayers.map((p) => ({ ...p, sessionWins: 0, sessionLosses: 0 }))
+    ? filteredPlayers.map((p) => {
+        const globalPlayer = globalPlayers?.find((player) => player.id === p.id);
+        return {
+          ...p,
+          winStreak: globalPlayer?.winStreak || 0,
+          winStreakUpdatedAt: globalPlayer?.winStreakUpdatedAt || 0,
+          sessionWins: 0,
+          sessionLosses: 0,
+        };
+      })
     : players;
 
   const getGamesPlayed = (player: Pick<Player, 'wins' | 'losses'>) => player.wins + player.losses;
+  const getVisibleStreak = (player: Pick<Player, 'winStreak' | 'winStreakUpdatedAt'>) =>
+    player.winStreakUpdatedAt ? (player.winStreak || 0) : 0;
   const isWeeklyRange = showTimeFilter && timeRange === '7d';
   const isWeeklyEligible = (player: Pick<Player, 'wins' | 'losses'>) => getGamesPlayed(player) >= WEEKLY_PODIUM_MIN_GAMES;
 
   const sortPlayerList = (list: Player[]) => {
     if (sortMethod === 'winRate') return list.sort((a, b) => calculateWinRate(b.wins, b.losses) - calculateWinRate(a.wins, a.losses));
+    if (sortMethod === 'streak') return list.sort((a, b) => getVisibleStreak(b) - getVisibleStreak(a) || b.wins - a.wins);
     if (sortMethod === 'matches') return list.sort((a, b) => (b.wins + b.losses) - (a.wins + a.losses));
     return list.sort((a, b) => b.wins - a.wins);
   };
@@ -416,14 +430,14 @@ export const Leaderboard = ({
           <div className="w-px h-5 bg-white/10"></div>
 
           {/* Sorter */}
-          {(['wins', 'winRate', 'matches'] as const).map((m) => (
+          {(['wins', 'winRate', 'streak', 'matches'] as const).map((m) => (
               <button key={m} onClick={() => setSortMethod(m)}
                 className={`px-2 sm:px-3 py-1.5 rounded-lg font-bold text-[10px] sm:text-xs transition-smooth ${
                   sortMethod === m
                     ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-[0_0_12px_rgba(0,217,255,0.3)]'
                     : 'bg-white/5 text-gray-300 hover:bg-white/10 border border-white/10'
                 }`}>
-                {m === 'wins' ? 'Wins' : m === 'winRate' ? 'Win%' : 'Games'}
+                {m === 'wins' ? 'Wins' : m === 'winRate' ? 'Win%' : m === 'streak' ? 'Streak' : 'Games'}
               </button>
             ))}
         </div>
@@ -505,8 +519,9 @@ export const Leaderboard = ({
         style={{ background: 'rgba(0,217,255,0.05)', borderBottom: '1px solid rgba(0,217,255,0.12)', color: 'rgba(0,217,255,0.5)' }}>
         <div className="col-span-1 text-center">Rank</div>
         <div className="col-span-4 pl-1">Player</div>
-        <div className="col-span-2 text-center">Wins</div>
-        <div className="col-span-2 text-center">Losses</div>
+        <div className="col-span-1 text-center">Wins</div>
+        <div className="col-span-1 text-center">Losses</div>
+        <div className="col-span-2 text-center">Streak</div>
         <div className="col-span-2 text-center">Rate</div>
         <div className="col-span-1 text-center">GP</div>
         {(isAdmin && canEditPlayers !== false) && <div className="absolute right-4 top-3">Admin</div>}
@@ -518,6 +533,8 @@ export const Leaderboard = ({
           const rank = idx + 1;
           const wr   = calculateWinRate(player.wins, player.losses);
           const gp   = player.wins + player.losses;
+          const streak = getVisibleStreak(player);
+          const streakUpdatedAt = player.winStreakUpdatedAt || 0;
           const isWeeklyIneligible = isWeeklyRange && gp < WEEKLY_PODIUM_MIN_GAMES;
           const displayRank = isWeeklyIneligible ? 999 : rank;
           const gamesNeeded = Math.max(0, WEEKLY_PODIUM_MIN_GAMES - gp);
@@ -590,11 +607,14 @@ export const Leaderboard = ({
                     )}
                   </div>
                 </div>
-                <div className="col-span-2 text-center">
+                <div className="col-span-1 text-center">
                   <span className="font-cyber font-black text-lg" style={{ color: '#22c55e', textShadow: '0 0 8px rgba(34,197,94,0.5)' }}>{player.wins}</span>
                 </div>
-                <div className="col-span-2 text-center">
+                <div className="col-span-1 text-center">
                   <span className="font-cyber font-black text-lg" style={{ color: '#f87171', textShadow: '0 0 8px rgba(248,113,113,0.5)' }}>{player.losses}</span>
+                </div>
+                <div className="col-span-2 flex justify-center">
+                  <StreakBadge value={streak} earnedAt={streakUpdatedAt} size="md" />
                 </div>
                 <div className="col-span-2 text-center">
                   <div className="inline-block rounded-lg px-2 py-1" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
@@ -661,6 +681,10 @@ export const Leaderboard = ({
                   <div className="w-6">
                     <p className="text-[8px] uppercase" style={{ color: 'rgba(255,255,255,0.3)' }}>L</p>
                     <p className="font-cyber font-black text-xs" style={{ color: '#f87171' }}>{player.losses}</p>
+                  </div>
+                  <div className="w-10 text-center">
+                    <p className="text-[8px] uppercase" style={{ color: 'rgba(255,255,255,0.3)' }}>STR</p>
+                    <StreakBadge value={streak} earnedAt={streakUpdatedAt} size="xs" />
                   </div>
                   <div className="w-8 text-center">
                     <p className="text-[8px] uppercase" style={{ color: 'rgba(255,255,255,0.3)' }}>%</p>
@@ -746,10 +770,14 @@ export const Leaderboard = ({
           merit: previewPlayer.merit !== undefined ? previewPlayer.merit : globalPlayer.merit,
           isBanned: previewPlayer.isBanned !== undefined ? previewPlayer.isBanned : globalPlayer.isBanned,
           banGamesRemaining: previewPlayer.banGamesRemaining !== undefined ? previewPlayer.banGamesRemaining : globalPlayer.banGamesRemaining,
+          winStreak: previewPlayer.winStreak !== undefined ? previewPlayer.winStreak : globalPlayer.winStreak,
+          winStreakUpdatedAt: previewPlayer.winStreakUpdatedAt !== undefined ? previewPlayer.winStreakUpdatedAt : globalPlayer.winStreakUpdatedAt,
           lastDuel: previewPlayer.lastDuel || globalPlayer.lastDuel,
         };
         const gp = mergedPlayer.wins + mergedPlayer.losses;
         const wr = gp > 0 ? (mergedPlayer.wins / gp) * 100 : 0;
+        const previewStreak = mergedPlayer.winStreak || 0;
+        const previewStreakUpdatedAt = mergedPlayer.winStreakUpdatedAt || 0;
         const previewPeriodGp = previewPlayer.wins + previewPlayer.losses;
         const previewGamesNeeded = Math.max(0, WEEKLY_PODIUM_MIN_GAMES - previewPeriodGp);
         const previewIsWeeklyIneligible = isWeeklyRange && previewPeriodGp < WEEKLY_PODIUM_MIN_GAMES;
@@ -873,6 +901,13 @@ export const Leaderboard = ({
                   </span>
                 </div>
 
+                {previewStreakUpdatedAt > 0 && previewStreak >= 3 && (
+                  <div className="flex items-center justify-between rounded-xl border border-orange-400/20 bg-orange-500/10 px-3 py-2">
+                    <span className="text-[9px] font-cyber font-black uppercase tracking-[0.16em] text-orange-200">Winning Streak</span>
+                    <StreakBadge value={previewStreak} earnedAt={previewStreakUpdatedAt} size="sm" />
+                  </div>
+                )}
+
                 {lastDuel && (
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/10 px-2.5 py-2">
                     <div className="flex min-w-0 items-center gap-2">
@@ -960,6 +995,7 @@ export const Leaderboard = ({
                     <span className="text-[9px] font-cyber text-red-400 uppercase mr-1">Losses:</span>
                     <span className="text-xs font-sans font-extrabold tracking-wide text-red-300">{previewPlayer.losses}</span>
                   </div>
+                  <StreakBadge value={previewStreak} earnedAt={previewStreakUpdatedAt} size="xs" />
                 </div>
 
                 {/* Pill Button styled like Follow + */}

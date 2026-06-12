@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import { AVATARS, AVATAR_CATEGORIES } from '../data/avatars';
 import { getUnlockedAchievements, ACHIEVEMENTS } from '../data/achievements';
 import { VotersList } from './VotersList';
+import { StreakBadge } from './StreakBadge';
 import type { Player } from '../types';
 
 interface ProfileModalProps {
@@ -46,6 +47,8 @@ export const ProfileModal = ({
   const losses = myStats?.losses || 0;
   const gp = wins + losses;
   const winRate = gp > 0 ? ((wins / gp) * 100).toFixed(1) : '0';
+  const winStreak = myStats?.winStreak || 0;
+  const showWinStreak = !!myStats?.winStreakUpdatedAt && winStreak >= 3;
   const unlocked = getUnlockedAchievements(wins, losses);
 
   const handleAddTester = (e: React.FormEvent) => {
@@ -120,7 +123,7 @@ export const ProfileModal = ({
             <div className="p-5 sm:p-10 max-w-3xl mx-auto animate-fade-in">
               <h1 className="font-cyber font-black text-2xl sm:text-3xl mb-6 sm:mb-8 tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">Career Stats</h1>
               
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+              <div className={`grid grid-cols-2 ${showWinStreak ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3 sm:gap-4 mb-6 sm:mb-8`}>
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4 sm:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
                   <p className="text-green-400 font-cyber font-black text-2xl sm:text-4xl mb-1">{wins}</p>
                   <p className="text-gray-500 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest">Total Wins</p>
@@ -129,6 +132,12 @@ export const ProfileModal = ({
                   <p className="text-red-400 font-cyber font-black text-2xl sm:text-4xl mb-1">{losses}</p>
                   <p className="text-gray-500 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest">Total Losses</p>
                 </div>
+                {showWinStreak && (
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-4 sm:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
+                    <p className="text-orange-300 font-cyber font-black text-2xl sm:text-4xl mb-1"><StreakBadge value={winStreak} earnedAt={myStats?.winStreakUpdatedAt} size="lg" /></p>
+                    <p className="text-gray-500 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest">Win Streak</p>
+                  </div>
+                )}
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4 sm:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
                   <p className="text-purple-400 font-cyber font-black text-2xl sm:text-4xl mb-1">{winRate}<span className="text-xs sm:text-lg">%</span></p>
                   <p className="text-gray-500 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest">Win Rate</p>

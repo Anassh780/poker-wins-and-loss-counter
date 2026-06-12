@@ -1,6 +1,7 @@
 import type { FC } from 'react';
 import type { Player } from '../types';
 import { calculateWinRate, getAvatarInitials } from '../utils/imageExport';
+import { StreakBadge } from './StreakBadge';
 
 interface PlayerCardProps {
   player: Player;
@@ -15,6 +16,7 @@ export const PlayerCard: FC<PlayerCardProps> = ({
   player, rank, showActions = false, onEdit, onDelete,
 }) => {
   const winRate = calculateWinRate(player.wins, player.losses);
+  const showStreak = !!player.winStreakUpdatedAt && (player.winStreak || 0) >= 3;
   const rankColor =
     rank === 1 ? 'from-yellow-400 to-yellow-600' :
     rank === 2 ? 'from-gray-300 to-gray-500' :
@@ -59,7 +61,7 @@ export const PlayerCard: FC<PlayerCardProps> = ({
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-1.5 text-center">
+      <div className={`grid ${showStreak ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 text-center`}>
         {[
           { label: 'W', value: player.wins, color: 'text-green-400' },
           { label: 'L', value: player.losses, color: 'text-red-400' },
@@ -70,6 +72,14 @@ export const PlayerCard: FC<PlayerCardProps> = ({
             <p className={`font-cyber font-black text-xs sm:text-sm ${color}`}>{value}</p>
           </div>
         ))}
+        {showStreak && (
+          <div className="rounded-lg py-1.5 px-1" style={{ background: 'rgba(0,0,0,0.3)' }}>
+            <p className="text-[9px] text-gray-600 uppercase">STR</p>
+            <div className="flex justify-center">
+              <StreakBadge value={player.winStreak || 0} earnedAt={player.winStreakUpdatedAt} size="xs" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Win rate bar */}

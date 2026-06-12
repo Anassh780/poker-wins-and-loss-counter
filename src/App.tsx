@@ -39,6 +39,12 @@ type DuelHighlight = {
 const DEFAULT_MERIT = 100;
 const BAN_GAMES = 2;
 
+const getWinStreak = (player?: Pick<Player, 'winStreak' | 'winStreakUpdatedAt'> | null) =>
+  player?.winStreakUpdatedAt ? Math.max(0, Number(player?.winStreak) || 0) : 0;
+
+const getWinStreakUpdatedAt = (player?: Pick<Player, 'winStreakUpdatedAt'> | null) =>
+  Number(player?.winStreakUpdatedAt) || 0;
+
 const getScoringSettings = (globalConfig: any): ScoringSettings => ({
   winAction: globalConfig?.scoringSettings?.winAction || 'spreadLosses',
   lossAction: globalConfig?.scoringSettings?.lossAction || 'spreadWins',
@@ -761,6 +767,8 @@ export default function App() {
       avatar: profileAvatar || currentUser.photoURL || '',
       wins: finalWins,
       losses: finalLosses,
+      winStreak: getWinStreak(oldMatch),
+      winStreakUpdatedAt: getWinStreakUpdatedAt(oldMatch),
       merit: oldMatch?.merit ?? DEFAULT_MERIT,
       rulesSignedAt: oldMatch?.rulesSignedAt || 0,
       isBanned: oldMatch?.isBanned || false,
@@ -834,6 +842,8 @@ export default function App() {
       avatar: playerData.avatar || existingNameMatch?.avatar || '',
       wins:   existingInGame?.wins    ?? 0,
       losses: existingInGame?.losses  ?? 0,
+      winStreak: existingInGame ? getWinStreak(existingInGame) : (playerData.winStreakUpdatedAt ? getWinStreak(playerData) : getWinStreak(existingNameMatch)),
+      winStreakUpdatedAt: existingInGame?.winStreakUpdatedAt ?? playerData.winStreakUpdatedAt ?? getWinStreakUpdatedAt(existingNameMatch),
       merit: existingNameMatch?.merit ?? DEFAULT_MERIT,
       rulesSignedAt: existingNameMatch?.rulesSignedAt || 0,
       isBanned: existingNameMatch?.isBanned || false,
@@ -858,6 +868,8 @@ export default function App() {
         avatar: player.avatar || '',
         wins: existingNameMatch?.wins ?? 0,
         losses: existingNameMatch?.losses ?? 0,
+        winStreak: playerData.winStreakUpdatedAt ? getWinStreak(playerData) : getWinStreak(existingNameMatch),
+        winStreakUpdatedAt: existingNameMatch?.winStreakUpdatedAt ?? playerData.winStreakUpdatedAt ?? 0,
         merit: existingNameMatch?.merit ?? DEFAULT_MERIT,
         rulesSignedAt: existingNameMatch?.rulesSignedAt || 0,
       }, { merge: true }).catch((err) => console.error("Firebase save failed:", err));
@@ -976,20 +988,22 @@ export default function App() {
 
   const handleAddWin = (id: string) => {
     pushHistory([...gamePlayers]);
+    const streakTimestamp = Date.now();
     setGamePlayers((prev) => prev.map((p) => {
-      if (p.id === id) return { ...p, wins: p.wins + 1 };
-      return scoringSettings.winAction === 'spreadLosses' ? { ...p, losses: p.losses + 1 } : p;
+      if (p.id === id) return { ...p, wins: p.wins + 1, winStreak: getWinStreak(p) + 1, winStreakUpdatedAt: streakTimestamp };
+      return scoringSettings.winAction === 'spreadLosses' ? { ...p, losses: p.losses + 1, winStreak: 0, winStreakUpdatedAt: streakTimestamp } : p;
     }));
     openDuelSelector(id);
   };
 
   const handleAddLoss = (id: string) => {
     pushHistory([...gamePlayers]);
+    const streakTimestamp = Date.now();
     const winnerId = gamePlayers.length === 2 ? gamePlayers.find((p) => p.id !== id)?.id : undefined;
     setGamePlayers((prev) =>
       prev.map((p) => {
-        if (p.id === id) return { ...p, losses: p.losses + 1 };
-        return scoringSettings.lossAction === 'spreadWins' ? { ...p, wins: p.wins + 1 } : p;
+        if (p.id === id) return { ...p, losses: p.losses + 1, winStreak: 0, winStreakUpdatedAt: streakTimestamp };
+        return scoringSettings.lossAction === 'spreadWins' ? { ...p, wins: p.wins + 1, winStreak: getWinStreak(p) + 1, winStreakUpdatedAt: streakTimestamp } : p;
       })
     );
     if (winnerId) openDuelSelector(winnerId);
@@ -998,7 +1012,11 @@ export default function App() {
   const handleResetStats = (id?: string) => {
     pushHistory([...gamePlayers]);
     setGamePlayers((prev) =>
-      prev.map((p) => (!id || p.id === id) ? { ...p, wins: 0, losses: 0 } : p)
+      prev.map((p) => {
+        if (id && p.id !== id) return p;
+        const globalPlayer = globalPlayers.find((player) => player.id === p.id);
+        return { ...p, wins: 0, losses: 0, winStreak: getWinStreak(globalPlayer), winStreakUpdatedAt: getWinStreakUpdatedAt(globalPlayer) };
+      })
     );
   };
 
@@ -1080,6 +1098,8 @@ export default function App() {
           const global = globalPlayers.find((g) => g.id === p.id);
           const finalWins = (global?.wins || 0) + p.wins;
           const finalLosses = (global?.losses || 0) + p.losses;
+          const finalWinStreak = p.winStreak !== undefined ? getWinStreak(p) : getWinStreak(global);
+          const finalWinStreakUpdatedAt = p.winStreakUpdatedAt !== undefined ? getWinStreakUpdatedAt(p) : getWinStreakUpdatedAt(global);
           const likes = global?.likes || 0;
           const dislikes = global?.dislikes || 0;
           const isCertified = checkPlayerCertification(finalWins, finalLosses, likes, dislikes);
@@ -1090,6 +1110,8 @@ export default function App() {
             avatar: p.avatar || '',
             wins: finalWins,
             losses: finalLosses,
+            winStreak: finalWinStreak,
+            winStreakUpdatedAt: finalWinStreakUpdatedAt,
             isCertified,
           };
           if (lastDuel) playerUpdate.lastDuel = lastDuel;
@@ -1169,7 +1191,9 @@ export default function App() {
     const playersToStart = playablePlayers.map(p => ({
       ...p,
       wins: 0,
-      losses: 0
+      losses: 0,
+      winStreak: getWinStreak(p),
+      winStreakUpdatedAt: getWinStreakUpdatedAt(p),
     }));
     setPlayerCount(playersToStart.length);
     setGamePlayers(playersToStart);
@@ -1238,6 +1262,8 @@ export default function App() {
               ...p, 
               name: finalPlayer.name, 
               avatar: finalPlayer.avatar,
+              winStreak: getWinStreak(finalPlayer),
+              winStreakUpdatedAt: getWinStreakUpdatedAt(finalPlayer),
               isCertified: finalPlayer.isCertified,
               likes: finalPlayer.likes,
               dislikes: finalPlayer.dislikes

@@ -1,4 +1,5 @@
 import type { Player } from '../types';
+import { StreakBadge } from './StreakBadge';
 
 interface PlayerControlsProps {
   players: Player[];
@@ -34,6 +35,7 @@ export const PlayerControls = ({
               <span className="text-[10px] text-gray-500 whitespace-nowrap flex-shrink-0">
                 {player.wins}W · {player.losses}L
               </span>
+              <StreakBadge value={player.winStreak || 0} earnedAt={player.winStreakUpdatedAt} size="xs" />
             </div>
 
             {/* Action buttons */}

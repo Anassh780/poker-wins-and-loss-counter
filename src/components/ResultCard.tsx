@@ -1,5 +1,6 @@
 import { calculateWinRate, getAvatarInitials } from '../utils/imageExport';
 import type { Player } from '../types';
+import { StreakBadge } from './StreakBadge';
 
 interface ResultCardProps {
   players: Player[];
@@ -32,6 +33,7 @@ const RANK_META: Record<number, { medal: string; glow: string; nameCls: string; 
 
 /* ── Component ─────────────────────── */
 export const ResultCard = ({ players, winner, duration }: ResultCardProps) => {
+  const winnerShowsStreak = !!winner.winStreakUpdatedAt && (winner.winStreak || 0) >= 3;
   const sorted = [...players].sort((a, b) => {
     const rA = a.wins + a.losses > 0 ? a.wins / (a.wins + a.losses) : 0;
     const rB = b.wins + b.losses > 0 ? b.wins / (b.wins + b.losses) : 0;
@@ -103,7 +105,7 @@ export const ResultCard = ({ players, winner, duration }: ResultCardProps) => {
 
           <h3 className="text-xl font-cyber font-black text-white mb-4 tracking-wide">{winner.name}</h3>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className={`grid ${winnerShowsStreak ? 'grid-cols-4' : 'grid-cols-3'} gap-2`}>
             {[
               { label: 'WINS',     value: winner.wins,  color: '#22c55e' },
               { label: 'LOSSES',   value: winner.losses, color: '#f87171' },
@@ -116,6 +118,14 @@ export const ResultCard = ({ players, winner, duration }: ResultCardProps) => {
                 <p className="text-xl font-cyber font-black" style={{ color }}>{value}</p>
               </div>
             ))}
+            {winnerShowsStreak && (
+              <div className="rounded-xl py-2.5 px-2"
+                style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="text-[9px] font-bold tracking-[0.2em] uppercase mb-1"
+                  style={{ color: 'rgba(255,255,255,0.35)' }}>STREAK</p>
+                <StreakBadge value={winner.winStreak || 0} earnedAt={winner.winStreakUpdatedAt} size="sm" />
+              </div>
+            )}
           </div>
         </div>
 
@@ -129,8 +139,9 @@ export const ResultCard = ({ players, winner, duration }: ResultCardProps) => {
               style={{ background: 'rgba(0,217,255,0.06)', borderBottom: '1px solid rgba(0,217,255,0.1)', color: 'rgba(0,217,255,0.5)' }}>
               <div className="col-span-1 text-center">#</div>
               <div className="col-span-4">Player</div>
-              <div className="col-span-2 text-center">Wins</div>
-              <div className="col-span-2 text-center">Losses</div>
+              <div className="col-span-1 text-center">Wins</div>
+              <div className="col-span-1 text-center">Losses</div>
+              <div className="col-span-2 text-center">Streak</div>
               <div className="col-span-2 text-center">Rate</div>
               <div className="col-span-1 text-center">GP</div>
             </div>
@@ -181,13 +192,18 @@ export const ResultCard = ({ players, winner, duration }: ResultCardProps) => {
                   </div>
 
                   {/* Wins */}
-                  <div className="col-span-2 text-center">
+                  <div className="col-span-1 text-center">
                     <span className="font-cyber font-black text-sm" style={{ color: '#22c55e' }}>{player.wins}</span>
                   </div>
 
                   {/* Losses */}
-                  <div className="col-span-2 text-center">
+                  <div className="col-span-1 text-center">
                     <span className="font-cyber font-black text-sm" style={{ color: '#f87171' }}>{player.losses}</span>
+                  </div>
+
+                  {/* Streak */}
+                  <div className="col-span-2 flex justify-center">
+                    <StreakBadge value={player.winStreak || 0} earnedAt={player.winStreakUpdatedAt} size="xs" />
                   </div>
 
                   {/* Win Rate */}

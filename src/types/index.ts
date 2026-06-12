@@ -4,6 +4,8 @@ export interface Player {
   avatar: string; // base64 or image URL
   wins: number;
   losses: number;
+  winStreak?: number;
+  winStreakUpdatedAt?: number;
   sessionWins?: number;
   sessionLosses?: number;
   rank?: number;

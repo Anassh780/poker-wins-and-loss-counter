@@ -4,6 +4,7 @@ import { AVATARS, AVATAR_CATEGORIES } from '../data/avatars';
 import { getUnlockedAchievements, ACHIEVEMENTS } from '../data/achievements';
 import { RecoveryPanel } from './RecoveryPanel';
 import { AdminManagement } from './AdminManagement';
+import { StreakBadge } from './StreakBadge';
 import { uploadAvatar, db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import type { AdminPermissions } from './AdminManagement';
@@ -94,6 +95,8 @@ export const ProfileView = ({
   const losses = myStats?.losses || 0;
   const gp = wins + losses;
   const winRate = gp > 0 ? ((wins / gp) * 100).toFixed(1) : '0';
+  const winStreak = myStats?.winStreak || 0;
+  const showWinStreak = !!myStats?.winStreakUpdatedAt && winStreak >= 3;
   const unlocked = getUnlockedAchievements(wins, losses);
   const merit = myStats?.merit ?? DEFAULT_MERIT;
   const rulesSignedAt = myStats?.rulesSignedAt || 0;
@@ -243,10 +246,17 @@ export const ProfileView = ({
               Career Stats
             </h1>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className={`grid grid-cols-2 md:grid-cols-3 ${showWinStreak ? 'xl:grid-cols-6' : 'xl:grid-cols-5'} gap-3 sm:gap-4 mb-6 sm:mb-8`}>
               {[
                 { value: wins, label: 'Total Wins', color: 'text-green-400' },
                 { value: losses, label: 'Total Losses', color: 'text-red-400' },
+                ...(showWinStreak
+                  ? [{
+                      value: <StreakBadge value={winStreak} earnedAt={myStats?.winStreakUpdatedAt} size="lg" />,
+                      label: 'Win Streak',
+                      color: 'text-orange-300',
+                    }]
+                  : []),
                 {
                   value: (
                     <>
